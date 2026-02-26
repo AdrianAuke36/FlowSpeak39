@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.flowspeak.app</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>FlowSpeak bruker mikrofonen for talegjenkjenning</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>FlowSpeak bruker talegjenkjenning for å transkribere det du sier</string>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>FlowSpeak bruker accessibility for å sette inn tekst i andre apper</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>FlowSpeak bruker Apple Events for å lese kontekst fra nettleseren</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

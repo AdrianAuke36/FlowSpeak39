@@ -11,8 +11,8 @@ struct FieldContext {
     let axHelp: String?
     let axTitle: String?
     let axPlaceholder: String?
-    let axValuePreview: String?
-    let browserURL: String?  // NY: aktiv URL i nettleser
+    let axValuePreview: String?  // Opptil 500 tegn bakover
+    let browserURL: String?
 }
 
 enum DraftMode: String {
@@ -24,6 +24,26 @@ enum DraftMode: String {
 }
 
 final class ContextResolver {
+    private enum Heuristics {
+        static let browserBundleIDs: Set<String> = [
+            "com.google.Chrome",
+            "com.apple.Safari",
+            "com.microsoft.edgemac",
+            "company.thebrowser.Browser",
+            "org.mozilla.firefox"
+        ]
+
+        static let subjectKeys = ["subject", "emne", "tema", "tittel", "betreff"]
+        static let emailBodyKeys = ["message body", "message", "melding", "skriv e-post", "skriv en e-post", "e-post", "email", "innhold", "body"]
+        static let composeHints = ["compose", "ny melding", "new message", "skriv e-post", "skriv en e-post"]
+        static let emailHints = ["e-post", "email", "subject", "emne", "recipient", "mottaker", "to", "cc", "bcc"]
+
+        static let chatURLHints = [
+            "chat.openai.com", "chatgpt.com", "claude.ai", "slack.com", "teams.microsoft.com",
+            "discord.com", "web.whatsapp.com", "messenger.com"
+        ]
+        static let noteURLHints = ["notion.so", "docs.google.com", "linear.app", "github.com"]
+    }
 
     func resolve() -> FieldContext? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
@@ -37,9 +57,10 @@ final class ContextResolver {
         let help = focused.flatMap { copyStringAttr($0, kAXHelpAttribute) }
         let title = focused.flatMap { copyStringAttr($0, kAXTitleAttribute) }
         let placeholder = focused.flatMap { copyStringAttr($0, kAXPlaceholderValueAttribute) }
-        let valuePreview = focused.flatMap { copyValuePreview($0) }
 
-        // NY: hent URL fra nettleser
+        // Opptil 500 tegn bakover for bedre kontekst
+        let valuePreview = focused.flatMap { copyValuePreview($0, maxLength: 500) }
+
         let browserURL = isBrowser(bundleId: bundleId) ? fetchBrowserURL(bundleId: bundleId) : nil
 
         return FieldContext(
@@ -57,161 +78,189 @@ final class ContextResolver {
     }
 
     func draftMode(for ctx: FieldContext) -> DraftMode {
-        // Native apps
         switch ctx.bundleId {
-        case "com.openai.chatgpt":
-            return .chatMessage
-        case "com.tinyspeck.slackmacgap":
-            return .chatMessage
-        case "com.microsoft.teams", "com.microsoft.teams2":
-            return .chatMessage
-        case "com.apple.Notes", "notion.id":
-            return .note
-        case "com.apple.mail":
-            return subjectOrBody(ctx)
-        case "com.microsoft.Outlook":
-            return subjectOrBody(ctx)
-        case "com.readdle.smartemail", "com.sparrowmailapp.sparrow3":
-            return subjectOrBody(ctx)
-        default:
-            break
+        case "com.openai.chatgpt":          return .chatMessage
+        case "com.tinyspeck.slackmacgap":   return .chatMessage
+        case "com.microsoft.teams",
+             "com.microsoft.teams2":        return .chatMessage
+        case "com.apple.Notes",
+             "notion.id":                   return .note
+        case "com.apple.mail":              return subjectOrBody(ctx)
+        case "com.microsoft.Outlook":       return subjectOrBody(ctx)
+        default: break
         }
 
-        // Nettleser – bruk URL først, fall tilbake på AX-heuristikk
         if isBrowser(bundleId: ctx.bundleId) {
-            if let url = ctx.browserURL {
-                // Gmail
-                if url.contains("mail.google.com") {
-                    if looksLikeEmailSubject(ctx) { return .emailSubject }
-                    return .emailBody
-                }
-                // Chat-apper
-                if url.contains("chat.openai.com") || url.contains("chatgpt.com") { return .chatMessage }
-                if url.contains("claude.ai") { return .chatMessage }
-                if url.contains("slack.com") { return .chatMessage }
-                if url.contains("teams.microsoft.com") { return .chatMessage }
-                if url.contains("discord.com") { return .chatMessage }
-                if url.contains("web.whatsapp.com") { return .chatMessage }
-                if url.contains("messenger.com") { return .chatMessage }
-                if url.contains("telegram.org") { return .chatMessage }
-
-                // Notater/skriving
-                if url.contains("notion.so") { return .note }
-                if url.contains("docs.google.com") { return .note }
-                if url.contains("linear.app") { return .note }
-
-                // Mail-klienter i nettleser
-                if url.contains("outlook.live.com") || url.contains("outlook.office.com") {
-                    if looksLikeEmailSubject(ctx) { return .emailSubject }
-                    return .emailBody
-                }
+            if let url = ctx.browserURL, let mode = modeFromURL(url, ctx: ctx) {
+                return mode
             }
-
-            // Fallback: AX-heuristikk
+            if looksLikeGmailCompose(ctx) {
+                return looksLikeEmailSubject(ctx) ? .emailSubject : .emailBody
+            }
             if looksLikeEmailSubject(ctx) { return .emailSubject }
             if looksLikeEmailBody(ctx) { return .emailBody }
             if ctx.axRole == "AXTextArea" { return .chatMessage }
-
             return .generic
         }
 
         return .generic
     }
 
+    // MARK: - URL-basert mode
+
+    private func modeFromURL(_ url: String, ctx: FieldContext) -> DraftMode? {
+        let lower = url.lowercased()
+
+        if lower.contains("mail.google.com") {
+            if looksLikeEmailSubject(ctx) { return .emailSubject }
+            if looksLikeGmailCompose(ctx) || looksLikeEmailBody(ctx) { return .emailBody }
+            return .generic
+        }
+        if lower.contains("outlook.live.com") || lower.contains("outlook.office.com") {
+            if looksLikeEmailSubject(ctx) { return .emailSubject }
+            if looksLikeGmailCompose(ctx) || looksLikeEmailBody(ctx) { return .emailBody }
+            return .generic
+        }
+
+        if containsAny(lower, from: Heuristics.chatURLHints) {
+            return .chatMessage
+        }
+
+        if containsAny(lower, from: Heuristics.noteURLHints) {
+            return .note
+        }
+
+        return nil
+    }
+
     // MARK: - Browser URL
 
     private func fetchBrowserURL(bundleId: String) -> String? {
-        let appRef = AXUIElementCreateApplication(
-            NSWorkspace.shared.frontmostApplication!.processIdentifier
-        )
-
-        // Finn aktiv vindu -> aktiv tab -> URL
-        var windowVal: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowVal) == .success,
-              let window = windowVal as! AXUIElement? else { return nil }
-
-        // Chrome/Edge: AXTextField med title "Address and search bar"
-        // Safari: AXTextField med identifier "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD"
-        // Arc: ligner Chrome
-
-        if let url = findURLField(in: window) {
-            return url
+        if let scripted = fetchBrowserURLViaAppleScript(bundleId: bundleId) {
+            return scripted
         }
 
-        return nil
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        return findAddressBarValue(in: axApp)
     }
 
-    private func findURLField(in element: AXUIElement, depth: Int = 0) -> String? {
-        guard depth < 8 else { return nil }
+    private func fetchBrowserURLViaAppleScript(bundleId: String) -> String? {
+        let scriptSource: String?
+        switch bundleId {
+        case "com.google.Chrome", "com.microsoft.edgemac", "company.thebrowser.Browser":
+            scriptSource = """
+            tell application id "\(bundleId)"
+                if (count of windows) = 0 then return ""
+                return URL of active tab of front window
+            end tell
+            """
+        case "com.apple.Safari":
+            scriptSource = """
+            tell application "Safari"
+                if (count of windows) = 0 then return ""
+                return URL of current tab of front window
+            end tell
+            """
+        default:
+            scriptSource = nil
+        }
 
-        // Sjekk om dette elementet er adressefeltet
-        let role = copyStringAttr(element, kAXRoleAttribute) ?? ""
+        guard let source = scriptSource,
+              let script = NSAppleScript(source: source) else { return nil }
+
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+        if error != nil { return nil }
+
+        let url = result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !url.isEmpty else { return nil }
+        return url
+    }
+
+    private func findAddressBarValue(in element: AXUIElement, depth: Int = 0) -> String? {
+        guard depth < 10 else { return nil }
+
+        let role = copyStringAttr(element, kAXRoleAttribute)
+        let subrole = copyStringAttr(element, kAXSubroleAttribute)
         let desc = copyStringAttr(element, kAXDescriptionAttribute) ?? ""
-        let identifier = copyStringAttr(element, "AXIdentifier") ?? ""
         let title = copyStringAttr(element, kAXTitleAttribute) ?? ""
 
-        let isAddressBar = role == "AXTextField" && (
+        let isAddressBar = (role == "AXTextField") && (
             desc.lowercased().contains("address") ||
-            desc.lowercased().contains("search bar") ||
             desc.lowercased().contains("url") ||
-            identifier.contains("ADDRESS") ||
-            identifier.contains("WEB_BROWSER") ||
-            title.lowercased().contains("address")
+            desc.lowercased().contains("location") ||
+            desc.lowercased().contains("adresse") ||
+            title.lowercased().contains("address") ||
+            subrole == "AXSearchField"
         )
 
-        if isAddressBar {
-            if let val = copyStringAttr(element, kAXValueAttribute), val.contains(".") {
-                return val
+        if isAddressBar, let value = copyStringAttr(element, kAXValueAttribute) {
+            if value.contains(".") && !value.contains("\n") {
+                return value
             }
         }
 
-        // Rekursivt søk i children
-        var childrenVal: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenVal) == .success,
-              let children = childrenVal as? [AXUIElement] else { return nil }
+        var childrenRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+              let children = childrenRef as? [AXUIElement] else { return nil }
 
         for child in children {
-            if let found = findURLField(in: child, depth: depth + 1) {
+            if let found = findAddressBarValue(in: child, depth: depth + 1) {
                 return found
             }
         }
-
         return nil
     }
 
-    // MARK: - Helpers
+    // MARK: - Native mail heuristikk
 
     private func subjectOrBody(_ ctx: FieldContext) -> DraftMode {
         return looksLikeEmailSubject(ctx) ? .emailSubject : .emailBody
     }
 
+    // MARK: - Heuristics
+
     private func isBrowser(bundleId: String) -> Bool {
-        return bundleId == "com.google.Chrome"
-            || bundleId == "com.apple.Safari"
-            || bundleId == "com.microsoft.edgemac"
-            || bundleId == "company.thebrowser.Browser"  // Arc
-            || bundleId == "org.mozilla.firefox"
-            || bundleId == "com.brave.Browser"
-            || bundleId == "com.operasoftware.Opera"
+        Heuristics.browserBundleIDs.contains(bundleId)
     }
 
     private func looksLikeEmailSubject(_ ctx: FieldContext) -> Bool {
         guard ctx.axRole == "AXTextField" else { return false }
         let blob = normalize([ctx.axDescription, ctx.axHelp, ctx.axTitle, ctx.axPlaceholder])
-        let keys = ["subject", "emne", "tema", "tittel", "re:", "fwd:"]
-        return keys.contains { blob.contains($0) }
+        return containsAny(blob, from: Heuristics.subjectKeys)
     }
 
     private func looksLikeEmailBody(_ ctx: FieldContext) -> Bool {
         let blob = normalize([ctx.axDescription, ctx.axHelp, ctx.axTitle, ctx.axPlaceholder])
-        let bodyKeys = ["message body", "melding", "compose", "skriv", "mail", "e-post", "email", "innhold"]
-        let hasBodyHint = bodyKeys.contains { blob.contains($0) }
-
+        let hasBodyHint = containsAny(blob, from: Heuristics.emailBodyKeys)
+        let hasEmailHint = containsAny(blob, from: Heuristics.emailHints)
         let role = ctx.axRole ?? ""
-        let isBigField = (role == "AXTextArea" || role == "AXWebArea" || role == "AXGroup" || role == "AXScrollArea")
+        let isWritableTextRole = (role == "AXTextArea" || role == "AXTextField" || role == "AXGroup" || role == "AXWebArea")
+        guard isWritableTextRole, !looksLikeEmailSubject(ctx) else { return false }
+        return hasBodyHint && (hasEmailHint || looksLikeGmailCompose(ctx))
+    }
 
-        if isBigField && !looksLikeEmailSubject(ctx) { return true }
-        return hasBodyHint
+    private func looksLikeGmailCompose(_ ctx: FieldContext) -> Bool {
+        if let url = ctx.browserURL?.lowercased() {
+            if url.contains("mail.google.com/mail") && (url.contains("compose=") || url.contains("#drafts")) {
+                return true
+            }
+            if url.contains("outlook.live.com/mail") || url.contains("outlook.office.com/mail") {
+                return true
+            }
+        }
+
+        let blob = normalize([
+            ctx.axDescription,
+            ctx.axHelp,
+            ctx.axTitle,
+            ctx.axPlaceholder
+        ])
+
+        let hasComposeHint = containsAny(blob, from: Heuristics.composeHints)
+        let hasEmailHint = containsAny(blob, from: Heuristics.emailHints)
+        return hasComposeHint && hasEmailHint
     }
 
     private func normalize(_ parts: [String?]) -> String {
@@ -219,6 +268,10 @@ final class ContextResolver {
             .joined(separator: " | ")
             .lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func containsAny(_ text: String, from hints: [String]) -> Bool {
+        hints.contains { text.contains($0) }
     }
 
     // MARK: - Accessibility helpers
@@ -238,11 +291,16 @@ final class ContextResolver {
         return value as? String
     }
 
-    private func copyValuePreview(_ el: AXUIElement) -> String? {
+    // NY: konfigurerbar maxLength
+    private func copyValuePreview(_ el: AXUIElement, maxLength: Int = 500) -> String? {
         var value: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(el, kAXValueAttribute as CFString, &value)
         guard err == .success else { return nil }
-        if let s = value as? String { return String(s.prefix(60)) }
+
+        if let s = value as? String {
+            // Ta de siste maxLength tegnene – mest relevant kontekst er det som er nærmest cursoren
+            return String(s.suffix(maxLength))
+        }
         return nil
     }
 }

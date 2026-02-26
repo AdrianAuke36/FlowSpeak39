@@ -1,0 +1,10 @@
+{
+  "terms": [
+    "Adrian",
+    "FlowSpeak"
+  ],
+  "replacements": [
+    { "from": "Adrain", "to": "Adrian" },
+    { "from": "fiskeboller", "to": "Fiskeboller" }
+  ]
+}

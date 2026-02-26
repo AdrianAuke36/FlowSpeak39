@@ -1,0 +1,18 @@
+{
+  "name": "flowlite-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:prod": "NODE_ENV=production node server.js",
+    "token:new": "node scripts/generate-token.mjs",
+    "jwt:new": "node scripts/generate-jwt.mjs",
+    "test": "node scripts/smoke-test.mjs",
+    "latency:smoke": "node scripts/latency-smoke.mjs",
+    "latency:profile": "node scripts/latency-profile.mjs"
+  },
+  "dependencies": {
+    "jose": "^5.9.6"
+  }
+}

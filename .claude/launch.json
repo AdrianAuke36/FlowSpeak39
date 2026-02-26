@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "FlowLite Backend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["/Users/adrianauke/Documents/FlowSpeak/flowlite-backend/server.js"],
+      "port": 3000
+    },
+    {
+      "name": "FlowSpeak (macOS app)",
+      "runtimeExecutable": "xcodebuild",
+      "runtimeArgs": [
+        "-project", "/Users/adrianauke/Documents/FlowSpeak/.claude/worktrees/bold-kapitsa/FlowSpeak.xcodeproj",
+        "-scheme", "FlowSpeak",
+        "-configuration", "Debug",
+        "build"
+      ],
+      "port": 0
+    }
+  ]
+}
