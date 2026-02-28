@@ -6,9 +6,14 @@
   "scripts": {
     "start": "node server.js",
     "start:prod": "NODE_ENV=production node server.js",
+    "start:local": "HOST=127.0.0.1 PORT=3000 REQUIRE_AUTH=false FLOWSPEAK_API_TOKENS= FLOWSPEAK_API_TOKEN= FLOWSPEAK_JWT_SECRET= FLOWSPEAK_JWT_SECRETS= SUPABASE_URL= SUPABASE_PROJECT_URL= SUPABASE_JWT_ISSUER= SUPABASE_JWKS_URL= SUPABASE_SERVICE_ROLE_KEY= STRIPE_SECRET_KEY= STRIPE_WEBHOOK_SECRET= ALLOWED_ORIGINS=* NODE_ENV=development node server.js",
+    "start:supabase-local": "HOST=127.0.0.1 PORT=3000 NODE_ENV=development node server.js",
     "token:new": "node scripts/generate-token.mjs",
     "jwt:new": "node scripts/generate-jwt.mjs",
+    "supabase:auth": "node scripts/supabase-auth-check.mjs",
     "test": "node scripts/smoke-test.mjs",
+    "launch:check": "node scripts/launch-check.mjs",
+    "check:local": "node scripts/launch-check.mjs --url http://127.0.0.1:3000",
     "latency:smoke": "node scripts/latency-smoke.mjs",
     "latency:profile": "node scripts/latency-profile.mjs"
   },

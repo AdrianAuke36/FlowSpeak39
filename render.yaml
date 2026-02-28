@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: flowspeak-backend
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./flowlite-backend/Dockerfile
+    dockerContext: ./flowlite-backend
+    healthCheckPath: /ready
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "3000"
+      - key: REQUIRE_AUTH
+        value: "true"
+      - key: OPENAI_MODEL
+        value: gpt-4.1-nano
+      - key: DEFAULT_TARGET_LANGUAGE
+        value: nb-NO
+      - key: SUPABASE_URL
+        value: https://zfvjmcgmgnyrryghriqj.supabase.co
+      - key: SUPABASE_JWT_AUDIENCE
+        value: authenticated
+      - key: ALLOWED_ORIGINS
+        value: https://flow-speak-direct.lovable.app
+      - key: FASTPATH_CACHE_TTL_MS
+        value: "10000"
+      - key: FASTPATH_CACHE_MAX_ITEMS
+        value: "1500"
+      - key: POLISH_LOCAL_FASTPATH_ENABLED
+        value: "true"
+      - key: POLISH_LOCAL_FASTPATH_MAX_CHARS
+        value: "90"
+      - key: POLISH_LOCAL_FASTPATH_MAX_WORDS
+        value: "18"
+      - key: OPENAI_API_KEY
+        sync: false
+

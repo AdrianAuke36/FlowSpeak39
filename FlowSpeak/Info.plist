@@ -4,6 +4,12 @@
 <dict>
 	<key>CFBundleIdentifier</key>
 	<string>com.flowspeak.app</string>
+	<key>FlowSpeakBackendBaseURL</key>
+	<string>https://performer-oclc-local-staffing.trycloudflare.com</string>
+	<key>FlowSpeakSupabaseProjectURL</key>
+	<string>https://zfvjmcgmgnyrryghriqj.supabase.co</string>
+	<key>FlowSpeakSupabaseAnonKey</key>
+	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmdmptY2dtZ255cnJ5Z2hyaXFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwNTU3NDYsImV4cCI6MjA4NzYzMTc0Nn0.iUam9fOCnBBbU8cMic0LcPFFEp7QSW-4i8QrJS3dK3g</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>FlowSpeak bruker mikrofonen for talegjenkjenning</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
