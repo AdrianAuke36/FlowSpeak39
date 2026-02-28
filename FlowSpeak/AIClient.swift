@@ -38,9 +38,11 @@ final class AIClient {
     }
 
     private enum Timeout {
-        static let request: TimeInterval = 1.5
-        static let resource: TimeInterval = 3.0
+        static let request: TimeInterval = 2.8
+        static let resource: TimeInterval = 5.0
         static let healthRequest: TimeInterval = 2.0
+        static let draftRequest: TimeInterval = 2.8
+        static let rewriteRequest: TimeInterval = 3.5
     }
 
     static let shared = AIClient()
@@ -89,16 +91,20 @@ final class AIClient {
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = Timeout.draftRequest
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.cachePolicy = .reloadIgnoringLocalCacheData
         applyAuthorizationHeader(to: &req)
 
+        let trimmedOverride = targetLanguageOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasExplicitTargetLanguageOverride = !trimmedOverride.isEmpty
         let effectiveTargetLanguage = resolvedTargetLanguage(from: targetLanguageOverride)
         let body = makePolishRequestBody(
             text: clean,
             mode: mode,
             ctx: ctx,
-            targetLanguage: effectiveTargetLanguage
+            targetLanguage: effectiveTargetLanguage,
+            targetLanguageForced: hasExplicitTargetLanguageOverride
         )
 
         req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
@@ -150,6 +156,7 @@ final class AIClient {
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = Timeout.rewriteRequest
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.cachePolicy = .reloadIgnoringLocalCacheData
         applyAuthorizationHeader(to: &req)
@@ -189,11 +196,13 @@ final class AIClient {
         text: String,
         mode: DraftMode,
         ctx: FieldContext?,
-        targetLanguage: String
+        targetLanguage: String,
+        targetLanguageForced: Bool
     ) -> [String: Any] {
         [
             "text": text,
             "targetLanguage": targetLanguage,
+            "targetLanguageForced": targetLanguageForced,
             "style": style.rawValue,
             "mode": mode.rawValue,
             "bundleId": ctx?.bundleId ?? "",

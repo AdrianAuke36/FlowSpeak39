@@ -1,0 +1,43 @@
+app = "flowspeak-backend-beta"
+primary_region = "arn"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+HOST = "0.0.0.0"
+PORT = "3000"
+REQUIRE_AUTH = "false"
+OPENAI_MODEL = "gpt-4.1-nano"
+DEFAULT_TARGET_LANGUAGE = "nb-NO"
+ALLOWED_ORIGINS = "*"
+FASTPATH_CACHE_TTL_MS = "10000"
+FASTPATH_CACHE_MAX_ITEMS = "1500"
+POLISH_LOCAL_FASTPATH_ENABLED = "true"
+POLISH_LOCAL_FASTPATH_MAX_CHARS = "90"
+POLISH_LOCAL_FASTPATH_MAX_WORDS = "18"
+
+[http_service]
+internal_port = 3000
+force_https = true
+auto_start_machines = true
+auto_stop_machines = true
+min_machines_running = 1
+processes = ["app"]
+
+[http_service.concurrency]
+type = "requests"
+soft_limit = 80
+hard_limit = 120
+
+[[http_service.checks]]
+grace_period = "15s"
+interval = "10s"
+method = "GET"
+timeout = "2s"
+path = "/ready"
+
+[[vm]]
+memory_mb = 512
+cpu_kind = "shared"
+cpus = 1

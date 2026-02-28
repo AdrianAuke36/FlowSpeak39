@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: flowspeak-backend
+    name: flowspeak-api-adrian-39
     runtime: docker
     plan: starter
     dockerfilePath: ./flowlite-backend/Dockerfile
@@ -36,4 +36,3 @@ services:
         value: "18"
       - key: OPENAI_API_KEY
         sync: false
-

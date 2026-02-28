@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         static let rewriteCopyDelayNanos: UInt64 = 170_000_000
         static let rewritePasteDelayNanos: UInt64 = 120_000_000
         static let fnDictationStartDelayNanos: UInt64 = 120_000_000
+        static let fnReleaseGraceNanos: UInt64 = 220_000_000
     }
 
     private struct PasteboardSnapshot {
@@ -46,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var functionModifierIsDown: Bool = false
     private var didSetTranslationOverrideInCurrentFnHold: Bool = false
     private var pendingFnStartWorkItem: DispatchWorkItem?
+    private var pendingFnReleaseWorkItem: DispatchWorkItem?
     private var didConsumeFnHoldForRewriteCombo: Bool = false
     private var isSelectionRewriteInProgress: Bool = false
     private var isCapturingRewriteInstruction: Bool = false
@@ -94,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         cancelPendingFnStart()
+        cancelPendingFnReleaseAction()
     }
 
     private func observeSettingsChanges() {
@@ -179,6 +182,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let shiftDown = shiftIsDown
         let controlDown = controlIsDown
 
+        if fnDown {
+            cancelPendingFnReleaseAction()
+        }
+
         if fnDown && controlDown && !didConsumeFnHoldForRewriteCombo && !dictation.isCaptureActive && !isSelectionRewriteInProgress {
             fnIsDown = true
             didConsumeFnHoldForRewriteCombo = true
@@ -205,10 +212,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             didSetTranslationOverrideInCurrentFnHold = false
             if didConsumeFnHoldForRewriteCombo {
                 didConsumeFnHoldForRewriteCombo = false
-                finishRewriteInstructionCaptureIfNeeded()
+                scheduleFnReleaseAction { [weak self] in
+                    self?.finishRewriteInstructionCaptureIfNeeded()
+                }
                 return
             }
-            DispatchQueue.main.async { self.handleFnReleased() }
+            scheduleFnReleaseAction { [weak self] in
+                self?.handleFnReleased()
+            }
         }
 
         if fnDown && dictation.isCaptureActive {
@@ -244,26 +255,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingFnStartWorkItem = nil
     }
 
+    private func scheduleFnReleaseAction(_ action: @escaping () -> Void) {
+        cancelPendingFnReleaseAction()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard !self.fnIsDown else { return }
+            action()
+        }
+        pendingFnReleaseWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .nanoseconds(Int(Constants.fnReleaseGraceNanos)),
+            execute: work
+        )
+    }
+
+    private func cancelPendingFnReleaseAction() {
+        pendingFnReleaseWorkItem?.cancel()
+        pendingFnReleaseWorkItem = nil
+    }
+
     private func updateModifierState(from event: NSEvent) {
         let flags = event.modifierFlags
-        let changedKey = Int(event.keyCode)
-
-        if changedKey == kVK_Function {
-            functionModifierIsDown = flags.contains(.function)
-            return
-        }
-
-        if changedKey == kVK_Shift || changedKey == kVK_RightShift {
-            shiftIsDown = flags.contains(.shift)
-            return
-        }
-
-        if changedKey == kVK_Control || changedKey == kVK_RightControl {
-            controlIsDown = flags.contains(.control)
-            return
-        }
-
-        // Fallback for other modifier changes (e.g. command/option/control).
+        // Always derive full modifier state from event flags. Relying on changed key
+        // alone makes fn detection flaky across keyboards and after repeated holds.
         functionModifierIsDown = flags.contains(.function)
         shiftIsDown = flags.contains(.shift)
         controlIsDown = flags.contains(.control)

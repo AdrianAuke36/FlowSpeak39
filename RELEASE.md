@@ -37,6 +37,15 @@ xcrun stapler staple "FlowSpeak.app"
 - `/ready` returns `200`
 - Stripe webhook secret + billing sync validated
 - CI smoke test green (`npm test`)
+- Public launch check green (`npm run launch:check -- --url https://api.your-domain.com --token <jwt-or-token> --origin https://flow-speak-direct.lovable.app`)
+
+## 4.1) App Production Defaults (optional)
+Set these keys in `FlowSpeak/Info.plist` before creating release build:
+- `FlowSpeakBackendBaseURL`
+- `FlowSpeakSupabaseProjectURL`
+- `FlowSpeakSupabaseAnonKey`
+
+This lets users start with production backend/Supabase without manual setup.
 
 ## 5) Rollout
 - Start with staged rollout (5-10% users), monitor:

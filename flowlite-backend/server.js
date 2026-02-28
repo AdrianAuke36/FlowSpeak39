@@ -43,6 +43,14 @@ const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 1800);
 const OPENAI_MAX_MODEL_MS = Number(process.env.OPENAI_MAX_MODEL_MS || 2200);
 const OPENAI_RETRIES = Math.max(1, Number(process.env.OPENAI_RETRIES || 1));
 const OPENAI_RETRY_BACKOFF_MS = Math.max(0, Number(process.env.OPENAI_RETRY_BACKOFF_MS || 80));
+const OPENAI_MAX_TOKENS_POLISH = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH || 120));
+const OPENAI_MAX_TOKENS_POLISH_SHORT = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH_SHORT || 96));
+const OPENAI_MAX_TOKENS_POLISH_SUBJECT = Math.max(24, Number(process.env.OPENAI_MAX_TOKENS_POLISH_SUBJECT || 64));
+const OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY = Math.max(64, Number(process.env.OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY || 180));
+const OPENAI_MAX_TOKENS_REWRITE = Math.max(64, Number(process.env.OPENAI_MAX_TOKENS_REWRITE || 180));
+const POLISH_LOCAL_FASTPATH_ENABLED = String(process.env.POLISH_LOCAL_FASTPATH_ENABLED || "true").toLowerCase() !== "false";
+const POLISH_LOCAL_FASTPATH_MAX_CHARS = Math.max(20, Number(process.env.POLISH_LOCAL_FASTPATH_MAX_CHARS || 90));
+const POLISH_LOCAL_FASTPATH_MAX_WORDS = Math.max(3, Number(process.env.POLISH_LOCAL_FASTPATH_MAX_WORDS || 18));
 const OPENAI_API_KEY_RAW = String(process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_API_KEY = OPENAI_API_KEY_RAW === "sk-..." ? "" : OPENAI_API_KEY_RAW;
 const OPENAI_API_BASE_URL = String(process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1").trim().replace(/\/+$/, "");
@@ -677,6 +685,7 @@ function buildFastpathCacheKey(body) {
     mode: String(body?.mode || "generic"),
     style: String(body?.style || "clean"),
     targetLanguage: String(body?.targetLanguage || DEFAULT_TARGET_LANGUAGE),
+    targetLanguageForced: body?.targetLanguageForced === true,
     bundleId: String(body?.bundleId || ""),
     appName: String(body?.appName || ""),
     axRole: String(body?.axRole || ""),
@@ -872,7 +881,7 @@ function buildDictionaryPromptClause(dictionary) {
   return clause;
 }
 
-async function requestModelDraft({ system, user, requestSignal }) {
+async function requestModelDraft({ system, user, requestSignal, maxTokens = OPENAI_MAX_TOKENS_POLISH }) {
   const attemptStats = [];
   let lastError = null;
   const overallStartedAt = Date.now();
@@ -912,26 +921,12 @@ async function requestModelDraft({ system, user, requestSignal }) {
           body: JSON.stringify({
             model: MODEL,
             temperature: 0,
-            max_tokens: 120,
+            max_tokens: Math.max(32, Math.min(Number(maxTokens || OPENAI_MAX_TOKENS_POLISH), 400)),
             messages: [
               { role: "system", content: system },
               { role: "user", content: user }
             ],
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "draft_result",
-                schema: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    language: { type: "string" },
-                    text: { type: "string" }
-                  },
-                  required: ["language", "text"]
-                }
-              }
-            }
+            response_format: { type: "json_object" }
           }),
           signal: controller.signal
         });
@@ -1579,6 +1574,44 @@ function inferMode(requestedMode, bundleId, url, ctx, fieldMeta) {
   return mode;
 }
 
+function countWords(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
+function resolvePolishMaxTokens(mode, text) {
+  const normalizedMode = String(mode || "generic").trim().toLowerCase();
+  if (normalizedMode === "email_subject") return OPENAI_MAX_TOKENS_POLISH_SUBJECT;
+  if (normalizedMode === "email_body") return OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY;
+
+  const textLength = String(text || "").trim().length;
+  if ((normalizedMode === "generic" || normalizedMode === "chat_message") && textLength <= POLISH_LOCAL_FASTPATH_MAX_CHARS) {
+    return OPENAI_MAX_TOKENS_POLISH_SHORT;
+  }
+  return OPENAI_MAX_TOKENS_POLISH;
+}
+
+function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text }) {
+  if (!POLISH_LOCAL_FASTPATH_ENABLED) return false;
+  if (targetLanguageForced) return false;
+
+  const normalizedMode = String(mode || "generic").trim().toLowerCase();
+  if (normalizedMode !== "generic" && normalizedMode !== "chat_message" && normalizedMode !== "note") {
+    return false;
+  }
+  if (String(style || "clean").trim().toLowerCase() !== "clean") return false;
+
+  const clean = String(text || "").trim();
+  if (!clean) return false;
+  if (clean.length > POLISH_LOCAL_FASTPATH_MAX_CHARS) return false;
+  if (countWords(clean) > POLISH_LOCAL_FASTPATH_MAX_WORDS) return false;
+  if (/[\n\r]/.test(clean)) return false;
+  if (/\b(oversett|translate)\b/i.test(clean)) return false;
+
+  return true;
+}
+
 async function handlePolish(body, requestSignal) {
   try {
     if (requestSignal?.aborted) {
@@ -1603,6 +1636,7 @@ async function handlePolish(body, requestSignal) {
     const bundleId = String(body?.bundleId || "");
     const appName = String(body?.appName || "");
     const lang = normalizeTargetLanguage(body?.targetLanguage);
+    const targetLanguageForced = body?.targetLanguageForced === true;
     const ctx  = String(body?.fieldContext || "").trim().slice(-220);
     const url  = String(body?.browserURL || "").trim();
     const axDescription = String(body?.axDescription || "");
@@ -1666,8 +1700,16 @@ async function handlePolish(body, requestSignal) {
       applyStyleHeuristics(localPolish(correctedInput, mode), style, mode)
     );
     let usedFallback = false;
+    let usedLocalFastpath = false;
 
-    if (!hasOpenAI) {
+    if (shouldUsePolishLocalFastpath({
+      mode,
+      style,
+      targetLanguageForced,
+      text: correctedInput
+    })) {
+      usedLocalFastpath = true;
+    } else if (!hasOpenAI) {
       usedFallback = true;
       console.warn("⚠️ OPENAI_API_KEY missing; using local fallback.");
     } else {
@@ -1676,7 +1718,8 @@ async function handlePolish(body, requestSignal) {
         const { response, attempts } = await requestModelDraft({
           system,
           user: correctedInput,
-          requestSignal
+          requestSignal,
+          maxTokens: resolvePolishMaxTokens(mode, correctedInput)
         });
         timings.modelAttempts = attempts;
         timings.modelMs = Date.now() - modelStartedAt;
@@ -1726,7 +1769,13 @@ async function handlePolish(body, requestSignal) {
 
     timings.totalMs = Date.now() - requestStartedAt;
     const retryCount = Math.max(0, (timings.modelAttempts?.length || 0) - 1);
-    console.log("✅ ut:", safePreview(finalText, 80), usedFallback ? "[fallback]" : "", "| chars:", finalText.length);
+    console.log(
+      "✅ ut:",
+      safePreview(finalText, 80),
+      usedLocalFastpath ? "[local-fastpath]" : (usedFallback ? "[fallback]" : ""),
+      "| chars:",
+      finalText.length
+    );
     console.log("⏱️ timings:", JSON.stringify({
       preprocessMs: timings.preprocessMs,
       modelMs: timings.modelMs,
@@ -1743,6 +1792,7 @@ async function handlePolish(body, requestSignal) {
         appliedMode: mode,
         appliedStyle: style,
         fallback: usedFallback,
+        localFastpath: usedLocalFastpath,
         timings: {
           preprocessMs: timings.preprocessMs,
           modelMs: timings.modelMs,
@@ -1802,7 +1852,8 @@ async function handleRewrite(body, requestSignal) {
     const { response, attempts } = await requestModelDraft({
       system,
       user: `Instruction:\n${instruction}\n\nText:\n${correctedInput}`,
-      requestSignal
+      requestSignal,
+      maxTokens: OPENAI_MAX_TOKENS_REWRITE
     });
     timings.modelAttempts = attempts;
     timings.modelMs = Date.now() - modelStartedAt;

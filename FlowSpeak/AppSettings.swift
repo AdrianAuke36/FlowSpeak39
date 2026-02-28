@@ -133,6 +133,9 @@ final class AppSettings: ObservableObject {
 
     static let defaultBackendBaseURL = "http://127.0.0.1:3000"
     static let defaultSupabaseProjectURL = ""
+    private static let infoBackendBaseURLKey = "FlowSpeakBackendBaseURL"
+    private static let infoSupabaseProjectURLKey = "FlowSpeakSupabaseProjectURL"
+    private static let infoSupabaseAnonKeyKey = "FlowSpeakSupabaseAnonKey"
 
     @Published var appLanguage: AppLanguage {
         didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: StorageKey.appLanguage) }
@@ -240,7 +243,8 @@ final class AppSettings: ObservableObject {
         let rawMicrophone = UserDefaults.standard.string(forKey: StorageKey.selectedMicrophoneUID) ?? MicrophoneOption.systemDefaultID
         self.selectedMicrophoneUID = rawMicrophone
 
-        let rawBackendBaseURL = UserDefaults.standard.string(forKey: StorageKey.backendBaseURL) ?? Self.defaultBackendBaseURL
+        let bootstrapBackendURL = Self.bootstrapBackendBaseURL()
+        let rawBackendBaseURL = UserDefaults.standard.string(forKey: StorageKey.backendBaseURL) ?? bootstrapBackendURL
         self.backendBaseURL = Self.normalizedBackendBaseURL(rawBackendBaseURL)
 
         let envToken = ProcessInfo.processInfo.environment["FLOWSPEAK_BACKEND_TOKEN"]?
@@ -248,13 +252,21 @@ final class AppSettings: ObservableObject {
         let storedToken = KeychainSecretStore.loadBackendToken()
         self.backendToken = storedToken.isEmpty ? envToken : storedToken
 
-        let rawSupabaseProjectURL = UserDefaults.standard.string(forKey: StorageKey.supabaseProjectURL) ?? Self.defaultSupabaseProjectURL
+        let bootstrapSupabaseProjectURL = Self.bootstrapSupabaseProjectURL()
+        let rawSupabaseProjectURL = UserDefaults.standard.string(forKey: StorageKey.supabaseProjectURL) ?? bootstrapSupabaseProjectURL
         self.supabaseProjectURL = Self.normalizedSupabaseProjectURL(rawSupabaseProjectURL)
 
         let envSupabaseAnonKey = ProcessInfo.processInfo.environment["FLOWSPEAK_SUPABASE_ANON_KEY"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let infoSupabaseAnonKey = Self.infoString(forKey: Self.infoSupabaseAnonKeyKey)
         let storedSupabaseAnonKey = KeychainSecretStore.loadSupabaseAnonKey()
-        self.supabaseAnonKey = storedSupabaseAnonKey.isEmpty ? envSupabaseAnonKey : storedSupabaseAnonKey
+        if !storedSupabaseAnonKey.isEmpty {
+            self.supabaseAnonKey = storedSupabaseAnonKey
+        } else if !envSupabaseAnonKey.isEmpty {
+            self.supabaseAnonKey = envSupabaseAnonKey
+        } else {
+            self.supabaseAnonKey = infoSupabaseAnonKey
+        }
 
         self.supabaseUserEmail = UserDefaults.standard.string(forKey: StorageKey.supabaseUserEmail) ?? ""
         if let rawExpiry = UserDefaults.standard.object(forKey: StorageKey.supabaseSessionExpiresAt) as? Double {
@@ -318,6 +330,43 @@ final class AppSettings: ObservableObject {
             out.removeLast()
         }
         return out
+    }
+
+    private static func bootstrapBackendBaseURL() -> String {
+        let envValue = ProcessInfo.processInfo.environment["FLOWSPEAK_BACKEND_BASE_URL"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !envValue.isEmpty {
+            return normalizedBackendBaseURL(envValue)
+        }
+
+        let infoValue = infoString(forKey: infoBackendBaseURLKey)
+        if !infoValue.isEmpty {
+            return normalizedBackendBaseURL(infoValue)
+        }
+
+        return defaultBackendBaseURL
+    }
+
+    private static func bootstrapSupabaseProjectURL() -> String {
+        let envValue = ProcessInfo.processInfo.environment["FLOWSPEAK_SUPABASE_PROJECT_URL"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !envValue.isEmpty {
+            return normalizedSupabaseProjectURL(envValue)
+        }
+
+        let infoValue = infoString(forKey: infoSupabaseProjectURLKey)
+        if !infoValue.isEmpty {
+            return normalizedSupabaseProjectURL(infoValue)
+        }
+
+        return defaultSupabaseProjectURL
+    }
+
+    private static func infoString(forKey key: String) -> String {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
+            return ""
+        }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var hasSupabaseSession: Bool {
