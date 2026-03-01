@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var backendStatusItem: NSMenuItem?
     private var aiMenuItem: NSMenuItem?
     private var signOutMenuItem: NSMenuItem?
+    private var microphoneMenuItems: [String: NSMenuItem] = [:]
     private var languageMenuItems: [AppLanguage: NSMenuItem] = [:]
     private var translationMenuItems: [AppLanguage: NSMenuItem] = [:]
     private var styleMenuItems: [WritingStyle: NSMenuItem] = [:]
@@ -79,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             token: settings.backendToken,
             persist: false
         )
+        refreshMicrophoneMenuState()
         refreshLanguageMenuState()
         refreshTranslationMenuState()
         refreshStyleMenuState()
@@ -116,6 +118,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .removeDuplicates()
             .sink { [weak self] style in
                 self?.applyStyle(style, persist: false)
+            }
+            .store(in: &cancellables)
+
+        settings.$selectedMicrophoneUID
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.refreshMicrophoneMenuState()
             }
             .store(in: &cancellables)
 
@@ -589,19 +598,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         backendStatusItem = backendItem
         menu.addItem(backendItem)
 
-        menu.addItem(makeMenuItem(title: "Home…", action: #selector(openHome), keyEquivalent: ","))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(makeMenuItem(title: "Home", action: #selector(openHome)))
 
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(makeSectionHeader(title: "Preferences"))
         let aiItem = makeMenuItem(title: "AI Polish: ON", action: #selector(toggleAI))
         menu.addItem(aiItem)
         aiMenuItem = aiItem
 
-        menu.addItem(makeLanguageRootMenuItem())
-        menu.addItem(makeTranslationRootMenuItem())
+        menu.addItem(makeMicrophoneRootMenuItem())
+        menu.addItem(makeLanguagesRootMenuItem())
         menu.addItem(makeStyleRootMenuItem())
+
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(makeSectionHeader(title: "Account"))
         let signOutItem = makeMenuItem(title: "Sign out", action: #selector(signOut))
         signOutMenuItem = signOutItem
         menu.addItem(signOutItem)
+
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(makeMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
@@ -622,9 +638,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
+    private func makeSectionHeader(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    private func makeMicrophoneRootMenuItem() -> NSMenuItem {
+        let rootItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        let microphoneMenu = NSMenu(title: "Microphone")
+        microphoneMenuItems.removeAll()
+
+        for microphone in MicrophoneCatalog.availableOptions() {
+            let item = makeMenuItem(title: microphone.name, action: #selector(selectMicrophone(_:)))
+            item.representedObject = microphone.id
+            microphoneMenu.addItem(item)
+            microphoneMenuItems[microphone.id] = item
+        }
+
+        rootItem.submenu = microphoneMenu
+        return rootItem
+    }
+
+    private func makeLanguagesRootMenuItem() -> NSMenuItem {
+        let rootItem = NSMenuItem(title: "Languages", action: nil, keyEquivalent: "")
+        let languagesMenu = NSMenu(title: "Languages")
+        languagesMenu.addItem(makeLanguageRootMenuItem())
+        languagesMenu.addItem(makeTranslationRootMenuItem())
+        rootItem.submenu = languagesMenu
+        return rootItem
+    }
+
     private func makeLanguageRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
-        let languageMenu = NSMenu(title: "Language")
+        let rootItem = NSMenuItem(title: "Input Language", action: nil, keyEquivalent: "")
+        let languageMenu = NSMenu(title: "Input Language")
         languageMenuItems.removeAll()
 
         for language in AppLanguage.allCases {
@@ -655,8 +702,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeTranslationRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Translate", action: nil, keyEquivalent: "")
-        let translationMenu = NSMenu(title: "Translate")
+        let rootItem = NSMenuItem(title: "Translate To", action: nil, keyEquivalent: "")
+        let translationMenu = NSMenu(title: "Translate To")
         translationMenuItems.removeAll()
 
         for language in AppLanguage.allCases {
@@ -763,6 +810,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aiMenuItem?.title = dictation.aiEnabled ? "AI Polish: ON" : "AI Polish: OFF"
     }
 
+    private func refreshMicrophoneMenuState() {
+        let selectedID = settings.selectedMicrophoneUID
+        for (id, item) in microphoneMenuItems {
+            item.state = selectedID == id ? .on : .off
+        }
+    }
+
     private func refreshSignOutMenuState() {
         signOutMenuItem?.isEnabled = settings.hasAuthenticatedSession
     }
@@ -857,6 +911,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let style = WritingStyle(rawValue: raw)
         else { return }
         applyStyle(style, persist: true)
+    }
+
+    @objc private func selectMicrophone(_ sender: NSMenuItem) {
+        guard let microphoneID = sender.representedObject as? String else { return }
+        settings.selectedMicrophoneUID = microphoneID
+        refreshMicrophoneMenuState()
     }
 
     @objc private func selectTranslationTarget(_ sender: NSMenuItem) {

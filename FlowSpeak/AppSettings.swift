@@ -117,6 +117,7 @@ final class AppSettings: ObservableObject {
         static let supabaseUserEmail = "supabaseUserEmail"
         static let supabaseSessionExpiresAt = "supabaseSessionExpiresAt"
         static let supabaseRefreshToken = "supabaseRefreshToken"
+        static let hasCompletedSetupOnboarding = "hasCompletedSetupOnboarding"
         static let overrides = "overrides"
     }
 
@@ -232,6 +233,10 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var hasCompletedSetupOnboarding: Bool {
+        didSet { UserDefaults.standard.set(hasCompletedSetupOnboarding, forKey: StorageKey.hasCompletedSetupOnboarding) }
+    }
+
     // bundleId -> modeRawValue
     @Published var overrides: [String: String] {
         didSet { saveOverrides() }
@@ -288,6 +293,11 @@ final class AppSettings: ObservableObject {
             self.supabaseSessionExpiresAt = Date(timeIntervalSince1970: rawExpiry)
         } else {
             self.supabaseSessionExpiresAt = nil
+        }
+        if UserDefaults.standard.object(forKey: StorageKey.hasCompletedSetupOnboarding) == nil {
+            self.hasCompletedSetupOnboarding = true
+        } else {
+            self.hasCompletedSetupOnboarding = UserDefaults.standard.bool(forKey: StorageKey.hasCompletedSetupOnboarding)
         }
         self.cachedSupabaseRefreshToken = UserDefaults.standard.string(forKey: StorageKey.supabaseRefreshToken)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -447,6 +457,7 @@ final class AppSettings: ObservableObject {
         supabaseUserEmail = credentials.email
 
         if applySupabaseSession(response) {
+            hasCompletedSetupOnboarding = false
             return .signedIn
         }
 
@@ -482,6 +493,11 @@ final class AppSettings: ObservableObject {
         UserDefaults.standard.removeObject(forKey: StorageKey.supabaseRefreshToken)
         supabaseSessionExpiresAt = nil
         backendToken = ""
+    }
+
+    @MainActor
+    func completeSetupOnboarding() {
+        hasCompletedSetupOnboarding = true
     }
 
     @discardableResult

@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import AVFoundation
 import SwiftUI
 
 struct HomeView: View {
@@ -33,12 +35,16 @@ struct HomeView: View {
         Group {
             // Gate the main shell until we have either a live JWT or a refresh token we can rotate.
             if settings.hasAuthenticatedSession {
-                HStack(spacing: 0) {
-                    Sidebar(activePage: $activePage)
-                    Divider()
-                    pageContent
+                if settings.hasCompletedSetupOnboarding {
+                    HStack(spacing: 0) {
+                        Sidebar(activePage: $activePage)
+                        Divider()
+                        pageContent
+                    }
+                    .background(AppTheme.canvas)
+                } else {
+                    SetupOnboardingView()
                 }
-                .background(AppTheme.canvas)
             } else {
                 AuthGateView()
             }
@@ -395,6 +401,317 @@ struct AuthFeatureRow: View {
                 .font(.system(size: 13, weight: .semibold))
         }
         .foregroundStyle(AppTheme.secondaryText)
+    }
+}
+
+private enum SetupOnboardingStep {
+    case microphone
+    case accessibility
+}
+
+struct SetupOnboardingView: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    @State private var step: SetupOnboardingStep = .microphone
+    @State private var microphoneGranted: Bool = false
+    @State private var accessibilityGranted: Bool = false
+    @State private var statusText: String = ""
+
+    private let microphoneSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+    private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.06, green: 0.07, blue: 0.10),
+                    Color(red: 0.03, green: 0.04, blue: 0.06)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            HStack(spacing: 56) {
+                VStack(alignment: .leading, spacing: 24) {
+                    HStack(spacing: 10) {
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.white.opacity(0.08))
+                            .frame(width: 54, height: 54)
+                            .overlay(
+                                Image(systemName: "waveform.circle")
+                                    .font(.system(size: 24, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.92))
+                            )
+
+                        Text("FlowSpeak")
+                            .font(.system(size: 24, weight: .bold, design: .serif))
+                            .foregroundStyle(.white.opacity(0.94))
+                    }
+
+                    if step == .accessibility {
+                        Button {
+                            step = .microphone
+                            statusText = ""
+                        } label: {
+                            Label("Back", systemImage: "arrow.left")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Text(stepTitle)
+                        .font(.system(size: 44, weight: .bold, design: .serif))
+                        .foregroundStyle(.white.opacity(0.96))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(stepSubtitle)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.68))
+                        .lineSpacing(5)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if step == .microphone, microphoneGranted {
+                        permissionBadge(text: "Microphone access granted", color: AppTheme.success)
+                    }
+
+                    if step == .accessibility, accessibilityGranted {
+                        permissionBadge(text: "Accessibility access granted", color: AppTheme.success)
+                    }
+
+                    if !statusText.isEmpty {
+                        Text(statusText)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Color.white.opacity(0.6))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack(spacing: 12) {
+                        Button(primaryActionTitle, action: primaryAction)
+                            .buttonStyle(OnboardingPrimaryButtonStyle())
+
+                        if showsContinueButton {
+                            Button("Continue", action: continueAction)
+                                .buttonStyle(OnboardingPrimaryButtonStyle())
+                                .disabled(!canContinue)
+                                .opacity(canContinue ? 1 : 0.45)
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                permissionPreviewCard
+                    .frame(width: 340)
+            }
+            .padding(.horizontal, 56)
+        }
+        .onAppear {
+            refreshPermissionState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissionState()
+        }
+    }
+
+    private var stepTitle: String {
+        switch step {
+        case .microphone:
+            return "Set up your microphone"
+        case .accessibility:
+            return "Enable Accessibility"
+        }
+    }
+
+    private var stepSubtitle: String {
+        switch step {
+        case .microphone:
+            return "FlowSpeak only activates your microphone when you choose to start dictation."
+        case .accessibility:
+            return "FlowSpeak needs accessibility access to paste dictation into focused text fields and run rewrite."
+        }
+    }
+
+    private var primaryActionTitle: String {
+        switch step {
+        case .microphone:
+            if microphoneGranted { return "Open Microphone Settings" }
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .denied { return "Open Microphone Settings" }
+            return "Allow microphone"
+        case .accessibility:
+            return accessibilityGranted ? "Finish setup" : "Allow access"
+        }
+    }
+
+    private var showsContinueButton: Bool {
+        step == .microphone
+    }
+
+    private var canContinue: Bool {
+        microphoneGranted
+    }
+
+    @ViewBuilder
+    private var permissionPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 72, height: 72)
+                .overlay(
+                    Image(systemName: step == .microphone ? "mic.fill" : "hand.raised.fill")
+                        .font(.system(size: 32, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                )
+
+            Text(step == .microphone ? "Microphone access" : "Accessibility access")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.94))
+
+            Text(step == .microphone
+                 ? "macOS will ask once. After you allow it, FlowSpeak can start recording when you hold fn."
+                 : "Turn on FlowSpeak in Privacy & Security. When you come back, Continue will unlock automatically.")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white.opacity(0.62))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                permissionStatePill(
+                    label: "Microphone",
+                    granted: microphoneGranted
+                )
+                permissionStatePill(
+                    label: "Accessibility",
+                    granted: accessibilityGranted
+                )
+            }
+            .padding(.top, 6)
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 28)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                )
+        )
+    }
+
+    private func permissionBadge(text: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+            Text(text)
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.14))
+        )
+    }
+
+    private func permissionStatePill(label: String, granted: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "minus.circle")
+                .foregroundStyle(granted ? AppTheme.success : Color.white.opacity(0.4))
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .foregroundStyle(.white.opacity(0.82))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color.white.opacity(0.06))
+        )
+    }
+
+    private func primaryAction() {
+        switch step {
+        case .microphone:
+            handleMicrophoneAction()
+        case .accessibility:
+            handleAccessibilityAction()
+        }
+    }
+
+    private func continueAction() {
+        guard microphoneGranted else { return }
+        step = .accessibility
+        statusText = ""
+        refreshPermissionState()
+    }
+
+    private func handleMicrophoneAction() {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .authorized:
+            microphoneGranted = true
+            continueAction()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    self.refreshPermissionState()
+                    if granted {
+                        self.statusText = ""
+                        self.continueAction()
+                    } else {
+                        self.statusText = "Microphone access was denied. Open System Settings to allow it."
+                    }
+                }
+            }
+        case .denied, .restricted:
+            statusText = "Enable microphone access in System Settings, then return to FlowSpeak."
+            NSWorkspace.shared.open(microphoneSettingsURL)
+        @unknown default:
+            statusText = "Unable to verify microphone permission."
+        }
+    }
+
+    private func handleAccessibilityAction() {
+        refreshPermissionState()
+        guard !accessibilityGranted else {
+            settings.completeSetupOnboarding()
+            return
+        }
+
+        statusText = "Enable FlowSpeak in Privacy & Security, then return here and press Finish setup."
+        NSWorkspace.shared.open(accessibilitySettingsURL)
+    }
+
+    private func refreshPermissionState() {
+        microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        accessibilityGranted = AXIsProcessTrusted()
+
+        if microphoneGranted && accessibilityGranted {
+            settings.completeSetupOnboarding()
+            return
+        }
+
+        if microphoneGranted && step == .microphone {
+            step = .accessibility
+        }
+    }
+}
+
+private struct OnboardingPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 16, weight: .semibold))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(isEnabled ? Color.white : Color.white.opacity(0.12))
+            )
+            .foregroundStyle(isEnabled ? Color.black.opacity(0.88) : Color.white.opacity(0.36))
+            .opacity(configuration.isPressed ? 0.94 : 1)
     }
 }
 
