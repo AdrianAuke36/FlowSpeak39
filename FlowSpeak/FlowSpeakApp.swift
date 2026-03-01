@@ -5,7 +5,7 @@ struct FlowLiteApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Window("FlowSpeak", id: "home") {
+        Window("FlowSpeak Beta", id: "home") {
             HomeView()
         }
         .windowResizability(.contentSize)

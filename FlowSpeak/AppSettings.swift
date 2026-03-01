@@ -111,10 +111,12 @@ final class AppSettings: ObservableObject {
         static let writingStyle = "writingStyle"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
         static let backendBaseURL = "backendBaseURL"
+        static let backendToken = "backendToken"
         static let supabaseProjectURL = "supabaseProjectURL"
         static let supabaseAnonKey = "supabaseAnonKey"
         static let supabaseUserEmail = "supabaseUserEmail"
         static let supabaseSessionExpiresAt = "supabaseSessionExpiresAt"
+        static let supabaseRefreshToken = "supabaseRefreshToken"
         static let overrides = "overrides"
     }
 
@@ -175,7 +177,11 @@ final class AppSettings: ObservableObject {
                 backendToken = normalized
                 return
             }
-            KeychainSecretStore.saveBackendToken(normalized)
+            if normalized.isEmpty {
+                UserDefaults.standard.removeObject(forKey: StorageKey.backendToken)
+            } else {
+                UserDefaults.standard.set(normalized, forKey: StorageKey.backendToken)
+            }
         }
     }
 
@@ -197,7 +203,11 @@ final class AppSettings: ObservableObject {
                 supabaseAnonKey = normalized
                 return
             }
-            KeychainSecretStore.saveSupabaseAnonKey(normalized)
+            if normalized.isEmpty {
+                UserDefaults.standard.removeObject(forKey: StorageKey.supabaseAnonKey)
+            } else {
+                UserDefaults.standard.set(normalized, forKey: StorageKey.supabaseAnonKey)
+            }
         }
     }
 
@@ -227,6 +237,9 @@ final class AppSettings: ObservableObject {
         didSet { saveOverrides() }
     }
 
+    // Keep the refresh token in memory after launch so SwiftUI auth checks do not keep hitting Keychain.
+    private var cachedSupabaseRefreshToken: String
+
     private init() {
         let rawLanguage = UserDefaults.standard.string(forKey: StorageKey.appLanguage) ?? AppLanguage.norwegian.rawValue
         self.appLanguage = AppLanguage(rawValue: rawLanguage) ?? .norwegian
@@ -249,7 +262,8 @@ final class AppSettings: ObservableObject {
 
         let envToken = ProcessInfo.processInfo.environment["FLOWSPEAK_BACKEND_TOKEN"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let storedToken = KeychainSecretStore.loadBackendToken()
+        let storedToken = UserDefaults.standard.string(forKey: StorageKey.backendToken)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.backendToken = storedToken.isEmpty ? envToken : storedToken
 
         let bootstrapSupabaseProjectURL = Self.bootstrapSupabaseProjectURL()
@@ -259,7 +273,8 @@ final class AppSettings: ObservableObject {
         let envSupabaseAnonKey = ProcessInfo.processInfo.environment["FLOWSPEAK_SUPABASE_ANON_KEY"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let infoSupabaseAnonKey = Self.infoString(forKey: Self.infoSupabaseAnonKeyKey)
-        let storedSupabaseAnonKey = KeychainSecretStore.loadSupabaseAnonKey()
+        let storedSupabaseAnonKey = UserDefaults.standard.string(forKey: StorageKey.supabaseAnonKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !storedSupabaseAnonKey.isEmpty {
             self.supabaseAnonKey = storedSupabaseAnonKey
         } else if !envSupabaseAnonKey.isEmpty {
@@ -274,6 +289,8 @@ final class AppSettings: ObservableObject {
         } else {
             self.supabaseSessionExpiresAt = nil
         }
+        self.cachedSupabaseRefreshToken = UserDefaults.standard.string(forKey: StorageKey.supabaseRefreshToken)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if let data = UserDefaults.standard.data(forKey: StorageKey.overrides),
            let dict = try? JSONDecoder().decode([String: String].self, from: data) {
@@ -369,32 +386,76 @@ final class AppSettings: ObservableObject {
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    // A refresh token is enough to consider the user "logged in" because we can mint a new JWT on demand.
     var hasSupabaseSession: Bool {
-        !KeychainSecretStore.loadSupabaseRefreshToken().isEmpty
+        !cachedSupabaseRefreshToken.isEmpty
+    }
+
+    // The home view uses this to decide whether to show the auth gate or the main app shell.
+    var hasAuthenticatedSession: Bool {
+        !backendToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasSupabaseSession
+    }
+
+    var isSupabaseConfigured: Bool {
+        !Self.normalizedSupabaseProjectURL(supabaseProjectURL).isEmpty &&
+        !supabaseAnonKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     @MainActor
     func signInSupabase(email: String, password: String) async throws {
-        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let cleanPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanEmail.isEmpty else {
-            throw AppSettingsError.auth("Missing email.")
-        }
-        guard !cleanPassword.isEmpty else {
-            throw AppSettingsError.auth("Missing password.")
-        }
+        let credentials = try validatedAuthCredentials(email: email, password: password)
 
         let response = try await requestSupabaseToken(
             grantType: "password",
-            payload: ["email": cleanEmail, "password": cleanPassword]
+            payload: ["email": credentials.email, "password": credentials.password]
         )
-        applySupabaseSession(response)
-        supabaseUserEmail = cleanEmail
+        guard applySupabaseSession(response) else {
+            throw AppSettingsError.auth("Supabase did not return a usable session.")
+        }
+        supabaseUserEmail = credentials.email
+    }
+
+    @MainActor
+    func signUpSupabase(
+        email: String,
+        password: String,
+        fullName: String? = nil,
+        country: String? = nil,
+        marketingOptIn: Bool = false
+    ) async throws -> SupabaseSignUpResult {
+        let credentials = try validatedAuthCredentials(email: email, password: password)
+        let cleanFullName = fullName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanCountry = country?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        var payload: [String: Any] = [
+            "email": credentials.email,
+            "password": credentials.password
+        ]
+
+        if !cleanFullName.isEmpty || !cleanCountry.isEmpty || marketingOptIn {
+            payload["data"] = [
+                "full_name": cleanFullName,
+                "country": cleanCountry,
+                "marketing_opt_in": marketingOptIn
+            ]
+        }
+
+        let response = try await requestSupabaseAuth(
+            path: "/auth/v1/signup",
+            payload: payload
+        )
+        supabaseUserEmail = credentials.email
+
+        if applySupabaseSession(response) {
+            return .signedIn
+        }
+
+        return .confirmationRequired
     }
 
     @MainActor
     func refreshSupabaseSessionIfNeeded(force: Bool = false) async -> Bool {
-        let refreshToken = KeychainSecretStore.loadSupabaseRefreshToken()
+        let refreshToken = cachedSupabaseRefreshToken
         guard !refreshToken.isEmpty else { return false }
 
         if !force,
@@ -409,8 +470,7 @@ final class AppSettings: ObservableObject {
                 grantType: "refresh_token",
                 payload: ["refresh_token": refreshToken]
             )
-            applySupabaseSession(response)
-            return true
+            return applySupabaseSession(response)
         } catch {
             return false
         }
@@ -418,26 +478,38 @@ final class AppSettings: ObservableObject {
 
     @MainActor
     func signOutSupabaseSession() {
-        KeychainSecretStore.saveSupabaseRefreshToken("")
+        cachedSupabaseRefreshToken = ""
+        UserDefaults.standard.removeObject(forKey: StorageKey.supabaseRefreshToken)
         supabaseSessionExpiresAt = nil
         backendToken = ""
     }
 
-    private func applySupabaseSession(_ response: SupabaseTokenResponse) {
-        let accessToken = response.access_token.trimmingCharacters(in: .whitespacesAndNewlines)
-        let refreshToken = response.refresh_token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !accessToken.isEmpty, !refreshToken.isEmpty else { return }
+    @discardableResult
+    private func applySupabaseSession(_ response: SupabaseAuthResponse) -> Bool {
+        let accessToken = response.access_token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let refreshToken = response.refresh_token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !accessToken.isEmpty, !refreshToken.isEmpty else { return false }
 
         backendToken = accessToken
-        KeychainSecretStore.saveSupabaseRefreshToken(refreshToken)
-        let expiresIn = max(30, response.expires_in)
+        cachedSupabaseRefreshToken = refreshToken
+        UserDefaults.standard.set(refreshToken, forKey: StorageKey.supabaseRefreshToken)
+        let expiresIn = max(30, response.expires_in ?? 0)
         supabaseSessionExpiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
         if let email = response.user?.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
             supabaseUserEmail = email
         }
+        return true
     }
 
-    private func requestSupabaseToken(grantType: String, payload: [String: String]) async throws -> SupabaseTokenResponse {
+    private func requestSupabaseToken(grantType: String, payload: [String: Any]) async throws -> SupabaseAuthResponse {
+        try await requestSupabaseAuth(
+            path: "/auth/v1/token?grant_type=\(grantType)",
+            payload: payload
+        )
+    }
+
+    // Sign-in, sign-up and refresh all go through the same Supabase REST contract, only the path differs.
+    private func requestSupabaseAuth(path: String, payload: [String: Any]) async throws -> SupabaseAuthResponse {
         let baseURL = Self.normalizedSupabaseProjectURL(supabaseProjectURL)
         let anonKey = supabaseAnonKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !baseURL.isEmpty else {
@@ -446,7 +518,7 @@ final class AppSettings: ObservableObject {
         guard !anonKey.isEmpty else {
             throw AppSettingsError.auth("Missing Supabase anon key.")
         }
-        guard let url = URL(string: "\(baseURL)/auth/v1/token?grant_type=\(grantType)") else {
+        guard let url = URL(string: "\(baseURL)\(path)") else {
             throw AppSettingsError.auth("Invalid Supabase project URL.")
         }
 
@@ -463,21 +535,57 @@ final class AppSettings: ObservableObject {
             throw AppSettingsError.auth("No HTTP response from Supabase.")
         }
         if !(200...299).contains(http.statusCode) {
-            let bodyText = String(data: data, encoding: .utf8) ?? ""
-            throw AppSettingsError.auth("Supabase auth failed (\(http.statusCode)). \(bodyText)")
+            throw AppSettingsError.auth(
+                "Supabase auth failed (\(http.statusCode)). \(supabaseErrorMessage(from: data))"
+            )
         }
         do {
-            return try JSONDecoder().decode(SupabaseTokenResponse.self, from: data)
+            return try JSONDecoder().decode(SupabaseAuthResponse.self, from: data)
         } catch {
             throw AppSettingsError.auth("Invalid Supabase auth response.")
         }
     }
+
+    private func validatedAuthCredentials(email: String, password: String) throws -> (email: String, password: String) {
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !cleanEmail.isEmpty else {
+            throw AppSettingsError.auth("Missing email.")
+        }
+        guard !cleanPassword.isEmpty else {
+            throw AppSettingsError.auth("Missing password.")
+        }
+
+        return (email: cleanEmail, password: cleanPassword)
+    }
+
+    private func supabaseErrorMessage(from data: Data) -> String {
+        if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let keys = ["msg", "message", "error_description", "error"]
+            for key in keys {
+                if let value = payload[key] as? String,
+                   !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return value
+                }
+            }
+        }
+
+        let bodyText = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return bodyText.isEmpty ? "Unknown auth error." : bodyText
+    }
 }
 
-private struct SupabaseTokenResponse: Decodable {
-    let access_token: String
-    let refresh_token: String
-    let expires_in: Int
+enum SupabaseSignUpResult {
+    case signedIn
+    case confirmationRequired
+}
+
+private struct SupabaseAuthResponse: Decodable {
+    let access_token: String?
+    let refresh_token: String?
+    let expires_in: Int?
     let token_type: String?
     let user: SupabaseUserInfo?
 }

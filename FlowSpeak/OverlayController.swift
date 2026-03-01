@@ -10,7 +10,7 @@ enum OverlayMode {
 
 final class OverlayController {
     private enum Constants {
-        static let panelSize = NSSize(width: 120, height: 52)
+        static let panelSize = NSSize(width: 132, height: 56)
         static let panelBottomOffset: CGFloat = 32
         static let hideDelay: TimeInterval = 0.25
     }
@@ -18,6 +18,7 @@ final class OverlayController {
     private var panel: NSPanel?
     private let state = OverlayState()
     private var pendingHideWorkItem: DispatchWorkItem?
+    var onAccessoryButtonTap: (() -> Void)?
 
     init() {
         DispatchQueue.main.async {
@@ -29,6 +30,7 @@ final class OverlayController {
         pendingHideWorkItem?.cancel()
         pendingHideWorkItem = nil
         state.mode = mode
+        state.isLocked = false
         state.active = true
         bringToFront()
     }
@@ -37,8 +39,13 @@ final class OverlayController {
         state.mode = mode
     }
 
+    func setLocked(_ locked: Bool) {
+        state.isLocked = locked
+    }
+
     func hide() {
         state.active = false
+        state.isLocked = false
         pendingHideWorkItem?.cancel()
 
         let work = DispatchWorkItem { [weak self] in
@@ -54,7 +61,14 @@ final class OverlayController {
     func showThinking(_ text: String) { }
 
     private func setupPanel() {
-        let host = NSHostingView(rootView: OverlayView(state: state))
+        let host = NSHostingView(
+            rootView: OverlayView(
+                state: state,
+                onAccessoryButtonTap: { [weak self] in
+                    self?.onAccessoryButtonTap?()
+                }
+            )
+        )
         host.translatesAutoresizingMaskIntoConstraints = false
 
         let p = NSPanel(
@@ -68,6 +82,7 @@ final class OverlayController {
         p.level = .floating
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         p.hidesOnDeactivate = false
+        p.ignoresMouseEvents = false
         p.isOpaque = false
         p.backgroundColor = .clear
         p.titleVisibility = .hidden
@@ -109,51 +124,96 @@ final class OverlayController {
 final class OverlayState: ObservableObject {
     @Published var active: Bool = false
     @Published var mode: OverlayMode = .standard
+    @Published var isLocked: Bool = false
 }
 
 // MARK: - View
 
 struct OverlayView: View {
     @ObservedObject var state: OverlayState
+    let onAccessoryButtonTap: () -> Void
 
     var body: some View {
-        PillView(active: state.active, mode: state.mode)
-            .frame(width: 120, height: 52)
+        PillView(
+            active: state.active,
+            mode: state.mode,
+            isLocked: state.isLocked,
+            onAccessoryButtonTap: onAccessoryButtonTap
+        )
+        .frame(width: 132, height: 56)
     }
 }
 
 struct PillView: View {
     let active: Bool
     let mode: OverlayMode
+    let isLocked: Bool
+    let onAccessoryButtonTap: () -> Void
     @State private var glowOpacity: Double = 0.35
 
     private var accentColor: Color {
         switch mode {
         case .standard:
-            return Color(red: 0.38, green: 0.65, blue: 0.98) // blue
+            return Color(red: 0.00, green: 0.48, blue: 1.00)
         case .translation:
-            return Color(red: 0.33, green: 0.82, blue: 0.46) // green
+            return Color(red: 0.20, green: 0.78, blue: 0.35)
         case .rewrite:
-            return Color(red: 0.96, green: 0.30, blue: 0.30) // red
+            return Color(red: 1.00, green: 0.23, blue: 0.19)
         }
     }
 
     var body: some View {
-        WaveView(active: active)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 11)
+        HStack(spacing: 10) {
+            WaveView(active: active)
+
+            Rectangle()
+                .fill(Color.white.opacity(0.14))
+                .frame(width: 0.5, height: 20)
+
+            Button(action: onAccessoryButtonTap) {
+                ZStack {
+                    Circle()
+                        .fill(isLocked ? accentColor.opacity(0.16) : Color.white.opacity(0.12))
+                        .overlay(
+                            Circle()
+                                .strokeBorder(isLocked ? accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
+                        )
+
+                    if isLocked {
+                        Circle()
+                            .fill(Color(red: 1.00, green: 0.23, blue: 0.19))
+                            .frame(width: 11, height: 11)
+                            .shadow(
+                                color: Color(red: 1.00, green: 0.23, blue: 0.19).opacity(0.5),
+                                radius: 5,
+                                x: 0,
+                                y: 0
+                            )
+                    } else {
+                        Image(systemName: "mic.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.92))
+                    }
+                }
+                .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
             .background(
                 Capsule()
                     .fill(.ultraThinMaterial)
                     .overlay(
                         Capsule()
                             .strokeBorder(
-                                accentColor.opacity(active ? glowOpacity : 0.06),
-                                lineWidth: 1.5
+                                accentColor.opacity(active ? glowOpacity : 0.08),
+                                lineWidth: 1.15
                             )
                     )
-                    .shadow(color: accentColor.opacity(active ? 0.18 : 0), radius: 10, x: 0, y: 0)
-                    .shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 4)
+                    .shadow(color: accentColor.opacity(active ? 0.16 : 0), radius: 10, x: 0, y: 0)
+                    .shadow(color: .black.opacity(0.28), radius: 14, x: 0, y: 5)
             )
             .onAppear {
                 withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
@@ -167,15 +227,15 @@ struct PillView: View {
 
 struct WaveView: View {
     let active: Bool
-    private let bars = 7
+    private let bars = 5
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3.5) {
             ForEach(0..<bars, id: \.self) { i in
                 WaveBar(active: active, index: i)
             }
         }
-        .frame(height: 28)
+        .frame(height: 24)
     }
 }
 
@@ -190,30 +250,39 @@ struct WaveBar: View {
         Capsule()
             .fill(Color.white.opacity(0.88))
             .frame(width: 2.5, height: height)
+            .onAppear {
+                if active {
+                    startAnimating()
+                }
+            }
             .onChange(of: active) { _, isActive in
                 animationTask?.cancel()
                 animationTask = nil
 
                 if isActive {
-                    height = 2.5
-                    let task = DispatchWorkItem {
-                        withAnimation(
-                            .easeInOut(duration: 0.55 + Double(index) * 0.04)
-                            .repeatForever(autoreverses: true)
-                        ) {
-                            height = CGFloat.random(in: 10...26)
-                        }
-                    }
-                    animationTask = task
-                    DispatchQueue.main.asyncAfter(
-                        deadline: .now() + Double(index) * 0.07,
-                        execute: task
-                    )
+                    startAnimating()
                 } else {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         height = 2.5
                     }
                 }
             }
+    }
+
+    private func startAnimating() {
+        height = 2.5
+        let task = DispatchWorkItem {
+            withAnimation(
+                .easeInOut(duration: 0.58 + Double(index) * 0.05)
+                .repeatForever(autoreverses: true)
+            ) {
+                height = CGFloat.random(in: 12...22)
+            }
+        }
+        animationTask = task
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Double(index) * 0.08,
+            execute: task
+        )
     }
 }

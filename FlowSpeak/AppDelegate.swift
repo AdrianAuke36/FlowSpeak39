@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var backendStatusItem: NSMenuItem?
     private var aiMenuItem: NSMenuItem?
+    private var signOutMenuItem: NSMenuItem?
     private var languageMenuItems: [AppLanguage: NSMenuItem] = [:]
     private var translationMenuItems: [AppLanguage: NSMenuItem] = [:]
     private var styleMenuItems: [WritingStyle: NSMenuItem] = [:]
@@ -49,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingFnStartWorkItem: DispatchWorkItem?
     private var pendingFnReleaseWorkItem: DispatchWorkItem?
     private var didConsumeFnHoldForRewriteCombo: Bool = false
+    private var isPersistentCaptureLocked: Bool = false
     private var isSelectionRewriteInProgress: Bool = false
     private var isCapturingRewriteInstruction: Bool = false
     private var pendingRewriteTargetApp: NSRunningApplication?
@@ -64,6 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         print("🔐 AX ved oppstart: \(trusted)")
 
         setupStatusBar()
+        overlay.onAccessoryButtonTap = { [weak self] in
+            self?.handleOverlayAccessoryButtonTap()
+        }
         setupFnKeyTap()
         refreshAIMenuTitle()
         applyLanguage(settings.appLanguage, persist: false)
@@ -125,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .combineLatest(settings.$backendToken)
             .sink { [weak self] baseURL, token in
                 self?.applyBackendConfiguration(baseURL: baseURL, token: token, persist: false)
+                self?.refreshSignOutMenuState()
             }
             .store(in: &cancellables)
     }
@@ -186,6 +192,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cancelPendingFnReleaseAction()
         }
 
+        if fnDown && !fnIsDown && isPersistentCaptureLocked && dictation.isCaptureActive {
+            stopPersistentCapture()
+            return
+        }
+
         if fnDown && controlDown && !didConsumeFnHoldForRewriteCombo && !dictation.isCaptureActive && !isSelectionRewriteInProgress {
             fnIsDown = true
             didConsumeFnHoldForRewriteCombo = true
@@ -212,9 +223,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             didSetTranslationOverrideInCurrentFnHold = false
             if didConsumeFnHoldForRewriteCombo {
                 didConsumeFnHoldForRewriteCombo = false
+                if isPersistentCaptureLocked {
+                    return
+                }
                 scheduleFnReleaseAction { [weak self] in
                     self?.finishRewriteInstructionCaptureIfNeeded()
                 }
+                return
+            }
+            if isPersistentCaptureLocked {
                 return
             }
             scheduleFnReleaseAction { [weak self] in
@@ -222,7 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if fnDown && dictation.isCaptureActive {
+        if fnDown && dictation.isCaptureActive && !isPersistentCaptureLocked {
             if isSelectionRewriteInProgress {
                 overlay.setListeningMode(.rewrite)
             } else {
@@ -285,6 +302,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleFnPressed() {
         guard !dictation.isCaptureActive else { return }
+        isPersistentCaptureLocked = false
+        overlay.setLocked(false)
         dictation.prefetchContext()
         overlay.showListening(mode: shiftIsDown ? .translation : .standard)
         dictation.start()
@@ -293,6 +312,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleFnReleased() {
         guard dictation.isCaptureActive else { return }
+        isPersistentCaptureLocked = false
+        overlay.setLocked(false)
         overlay.hide()
         dictation.stopAndInsert()
         updateStatusIcon(isRecording: false)
@@ -314,6 +335,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingRewriteTargetApp = NSWorkspace.shared.frontmostApplication
         isSelectionRewriteInProgress = true
         isCapturingRewriteInstruction = true
+        isPersistentCaptureLocked = false
+        overlay.setLocked(false)
         overlay.showListening(mode: .rewrite)
         dictation.start()
         updateStatusIcon(isRecording: true)
@@ -322,6 +345,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishRewriteInstructionCaptureIfNeeded() {
         guard isCapturingRewriteInstruction else { return }
         isCapturingRewriteInstruction = false
+        isPersistentCaptureLocked = false
+        overlay.setLocked(false)
 
         let instruction = dictation
             .stopAndCaptureInstruction()
@@ -356,6 +381,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         beginRewriteFromVoiceInstruction()
     }
 
+    private func handleOverlayAccessoryButtonTap() {
+        guard dictation.isCaptureActive else { return }
+
+        if isPersistentCaptureLocked {
+            stopPersistentCapture()
+            return
+        }
+
+        isPersistentCaptureLocked = true
+        overlay.setLocked(true)
+    }
+
+    private func stopPersistentCapture() {
+        guard dictation.isCaptureActive else {
+            isPersistentCaptureLocked = false
+            overlay.setLocked(false)
+            return
+        }
+
+        isPersistentCaptureLocked = false
+        overlay.setLocked(false)
+        fnIsDown = false
+
+        if isCapturingRewriteInstruction {
+            finishRewriteInstructionCaptureIfNeeded()
+        } else {
+            handleFnReleased()
+        }
+    }
+
     @MainActor
     private func performSelectionRewrite(instruction: String, targetApp: NSRunningApplication?) async {
         defer {
@@ -368,7 +423,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        targetApp.activate(options: [.activateIgnoringOtherApps])
+        targetApp.activate(options: [])
         overlay.showListening(mode: .rewrite)
         try? await Task.sleep(nanoseconds: Constants.rewriteCopyDelayNanos)
 
@@ -435,13 +490,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func presentRewriteError(_ message: String) {
         print("❌ rewrite:", message)
-        let alert = NSAlert()
-        alert.messageText = "Rewrite Selected Text"
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        if message.localizedCaseInsensitiveContains("Accessibility permission") {
+            openAccessibilitySettings()
+        } else {
+            NSSound.beep()
+        }
+    }
+
+    private func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     private func capturePasteboardSnapshot() -> PasteboardSnapshot {
@@ -512,10 +572,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateBackendMenuItem(online: Bool) {
-        let translateLabel = settings.translationTargetLanguage.menuLabel
         backendStatusItem?.title = online
-            ? "Backend: ✅ online  •  Hold fn (fn+Shift = Translate → \(translateLabel))"
-            : "Backend: ⚠️ offline  •  Start server!"
+            ? "Backend: ✅ online"
+            : "Backend: ⚠️ offline"
     }
 
     // MARK: - Status bar
@@ -530,20 +589,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         backendStatusItem = backendItem
         menu.addItem(backendItem)
 
-        menu.addItem(makeMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(makeMenuItem(title: "Home…", action: #selector(openHome), keyEquivalent: ","))
 
         let aiItem = makeMenuItem(title: "AI Polish: ON", action: #selector(toggleAI))
         menu.addItem(aiItem)
         aiMenuItem = aiItem
-        menu.addItem(makeMenuItem(title: "Rewrite Selected Text…", action: #selector(rewriteSelectedText)))
 
         menu.addItem(makeLanguageRootMenuItem())
         menu.addItem(makeTranslationRootMenuItem())
         menu.addItem(makeStyleRootMenuItem())
         menu.addItem(NSMenuItem.separator())
+        let signOutItem = makeMenuItem(title: "Sign out", action: #selector(signOut))
+        signOutMenuItem = signOutItem
+        menu.addItem(signOutItem)
         menu.addItem(makeMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
+        refreshSignOutMenuState()
     }
 
     private func configureStatusButton() {
@@ -701,6 +763,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aiMenuItem?.title = dictation.aiEnabled ? "AI Polish: ON" : "AI Polish: OFF"
     }
 
+    private func refreshSignOutMenuState() {
+        signOutMenuItem?.isEnabled = settings.hasAuthenticatedSession
+    }
+
     private func refreshLanguageMenuState() {
         for (language, item) in languageMenuItems {
             item.state = settings.appLanguage == language ? .on : .off
@@ -754,6 +820,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AIClient.shared.backendToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    @objc private func openHome() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows {
+            if window.identifier?.rawValue == "home" || window.title.contains("FlowSpeak") {
+                window.makeKeyAndOrderFront(nil)
+                return
+            }
+        }
+    }
+
     @objc private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
@@ -763,6 +839,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dictation.aiEnabled.toggle()
         refreshAIMenuTitle()
         updateStatusIcon(isRecording: false)
+    }
+
+    @objc private func signOut() {
+        settings.signOutSupabaseSession()
     }
 
     @objc private func selectLanguage(_ sender: NSMenuItem) {
