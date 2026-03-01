@@ -11,7 +11,7 @@ final class DictationController: NSObject {
         static let pasteDelay: TimeInterval = 0.08
         static let pasteCompletionDelay: TimeInterval = 0.08
         static let replaceDelay: TimeInterval = 0.03
-        static let maxAIReplaceDelay: TimeInterval = 1.2
+        static let maxAIReplaceDelay: TimeInterval = 2.0
         static let maxAIReplaceDelayEmail: TimeInterval = 5.5
     }
 

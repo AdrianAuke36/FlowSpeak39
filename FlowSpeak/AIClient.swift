@@ -33,6 +33,8 @@ enum AIClientError: LocalizedError {
 final class AIClient {
     private enum Endpoint {
         static let health = "/health"
+        static let ready = "/ready"
+        static let version = "/version"
         static let polish = "/polish"
         static let rewrite = "/rewrite"
     }
@@ -65,13 +67,28 @@ final class AIClient {
 
     func checkHealth() async -> Bool {
         await ensureFreshBackendTokenIfNeeded()
-        guard let url = URL(string: "\(baseURLString)\(Endpoint.health)") else { return false }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = Timeout.healthRequest
-        applyAuthorizationHeader(to: &req)
+        guard let readyURL = URL(string: "\(baseURLString)\(Endpoint.ready)") else { return false }
+        var readyRequest = URLRequest(url: readyURL)
+        readyRequest.timeoutInterval = Timeout.healthRequest
+
         do {
-            let (_, resp) = try await session.data(for: req)
-            return (resp as? HTTPURLResponse)?.statusCode == 200
+            let (_, readyResponse) = try await session.data(for: readyRequest)
+            guard (readyResponse as? HTTPURLResponse)?.statusCode == 200 else { return false }
+        } catch {
+            return false
+        }
+
+        let token = backendToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return true }
+        guard let versionURL = URL(string: "\(baseURLString)\(Endpoint.version)") else { return false }
+
+        var versionRequest = URLRequest(url: versionURL)
+        versionRequest.timeoutInterval = Timeout.healthRequest
+        applyAuthorizationHeader(to: &versionRequest)
+
+        do {
+            let (_, versionResponse) = try await session.data(for: versionRequest)
+            return (versionResponse as? HTTPURLResponse)?.statusCode == 200
         } catch {
             return false
         }

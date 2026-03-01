@@ -43,11 +43,12 @@ const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 1800);
 const OPENAI_MAX_MODEL_MS = Number(process.env.OPENAI_MAX_MODEL_MS || 2200);
 const OPENAI_RETRIES = Math.max(1, Number(process.env.OPENAI_RETRIES || 1));
 const OPENAI_RETRY_BACKOFF_MS = Math.max(0, Number(process.env.OPENAI_RETRY_BACKOFF_MS || 80));
-const OPENAI_MAX_TOKENS_POLISH = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH || 120));
-const OPENAI_MAX_TOKENS_POLISH_SHORT = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH_SHORT || 96));
-const OPENAI_MAX_TOKENS_POLISH_SUBJECT = Math.max(24, Number(process.env.OPENAI_MAX_TOKENS_POLISH_SUBJECT || 64));
-const OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY = Math.max(64, Number(process.env.OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY || 180));
-const OPENAI_MAX_TOKENS_REWRITE = Math.max(64, Number(process.env.OPENAI_MAX_TOKENS_REWRITE || 180));
+const OPENAI_MAX_TOKENS_POLISH = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH || 96));
+const OPENAI_MAX_TOKENS_POLISH_SHORT = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH_SHORT || 72));
+const OPENAI_MAX_TOKENS_POLISH_TRANSLATE = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH_TRANSLATE || 80));
+const OPENAI_MAX_TOKENS_POLISH_SUBJECT = Math.max(24, Number(process.env.OPENAI_MAX_TOKENS_POLISH_SUBJECT || 48));
+const OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY = Math.max(64, Number(process.env.OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY || 144));
+const OPENAI_MAX_TOKENS_REWRITE = Math.max(64, Number(process.env.OPENAI_MAX_TOKENS_REWRITE || 128));
 const POLISH_LOCAL_FASTPATH_ENABLED = String(process.env.POLISH_LOCAL_FASTPATH_ENABLED || "true").toLowerCase() !== "false";
 const POLISH_LOCAL_FASTPATH_MAX_CHARS = Math.max(20, Number(process.env.POLISH_LOCAL_FASTPATH_MAX_CHARS || 90));
 const POLISH_LOCAL_FASTPATH_MAX_WORDS = Math.max(3, Number(process.env.POLISH_LOCAL_FASTPATH_MAX_WORDS || 18));
@@ -1580,16 +1581,50 @@ function countWords(text) {
   return trimmed.split(/\s+/).length;
 }
 
-function resolvePolishMaxTokens(mode, text) {
+function resolvePolishMaxTokens(mode, text, targetLanguageForced) {
   const normalizedMode = String(mode || "generic").trim().toLowerCase();
+  const textLength = String(text || "").trim().length;
+
+  // Short translations do not need the broader drafting token budget.
+  if (targetLanguageForced && textLength <= 220) {
+    return OPENAI_MAX_TOKENS_POLISH_TRANSLATE;
+  }
+
   if (normalizedMode === "email_subject") return OPENAI_MAX_TOKENS_POLISH_SUBJECT;
   if (normalizedMode === "email_body") return OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY;
 
-  const textLength = String(text || "").trim().length;
   if ((normalizedMode === "generic" || normalizedMode === "chat_message") && textLength <= POLISH_LOCAL_FASTPATH_MAX_CHARS) {
     return OPENAI_MAX_TOKENS_POLISH_SHORT;
   }
   return OPENAI_MAX_TOKENS_POLISH;
+}
+
+function buildPolishSystemPrompt({ mode, style, lang, url, ctx, dictionaryRule, targetLanguageForced }) {
+  if (targetLanguageForced) {
+    return `Translate the user's text into ${lang}. Preserve meaning, names, numbers, and formatting. Do not add commentary, alternatives, or extra context. Return exactly one final translation only. ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}`;
+  }
+
+  const langRule = `Output language must be ${lang}. Do not translate into any other language.`;
+  const modeRule = MODE_RULES[mode] || MODE_RULES.generic;
+  const styleRule = STYLE_RULES[style] || STYLE_RULES.clean;
+
+  let contextBlock = "";
+  if (mode !== "generic") {
+    if (url) contextBlock += `\nURL: ${url}`;
+    if (ctx) contextBlock += `\nContext: ${ctx}`;
+  }
+
+  const noGreetingRule = mode === "email_body"
+    ? ""
+    : "No added greetings/sign-offs unless already present.";
+  const singleDraftRule = "Return exactly one final draft only. Never include alternatives, translations, duplicate versions, or placeholders like [Your Name].";
+  const correctionRule = "If user self-corrects (e.g. 'nei, jeg mener', 'eller nei', 'no, I mean'), keep only the final corrected detail and remove superseded earlier versions.";
+  const fidelityRule = "Do not invent new facts, topics, requests, names, or questions. Rewrite only what is explicitly in the input.";
+  const recipientRule = mode === "email_body"
+    ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
+    : "";
+
+  return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${langRule} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${recipientRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
 
 function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text }) {
@@ -1665,6 +1700,8 @@ async function handlePolish(body, requestSignal) {
           return "";
         }
       })() : ""),
+      "| forcedLang:",
+      targetLanguageForced,
       "| ctxChars:",
       ctx.length
     );
@@ -1672,27 +1709,16 @@ async function handlePolish(body, requestSignal) {
       console.log("📚 dictionary(active): terms", dictionary.terms.length, "| replacements", dictionary.replacements.length);
     }
 
-    const langRule = `Output language must be ${lang}. Do not translate into any other language.`;
-    const modeRule = MODE_RULES[mode] || MODE_RULES.generic;
-    const styleRule = STYLE_RULES[style] || STYLE_RULES.clean;
     const dictionaryRule = buildDictionaryPromptClause(dictionary);
-
-    let contextBlock = "";
-    if (mode !== "generic") {
-      if (url) contextBlock += `\nURL: ${url}`;
-      if (ctx) contextBlock += `\nContext: ${ctx}`;
-    }
-
-    const noGreetingRule = mode === "email_body"
-      ? ""
-      : "No added greetings/sign-offs unless already present.";
-    const singleDraftRule = "Return exactly one final draft only. Never include alternatives, translations, duplicate versions, or placeholders like [Your Name].";
-    const correctionRule = "If user self-corrects (e.g. 'nei, jeg mener', 'eller nei', 'no, I mean'), keep only the final corrected detail and remove superseded earlier versions.";
-    const fidelityRule = "Do not invent new facts, topics, requests, names, or questions. Rewrite only what is explicitly in the input.";
-    const recipientRule = mode === "email_body"
-      ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
-      : "";
-    const system = `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${langRule} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${recipientRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
+    const system = buildPolishSystemPrompt({
+      mode,
+      style,
+      lang,
+      url,
+      ctx,
+      dictionaryRule,
+      targetLanguageForced
+    });
     timings.preprocessMs = Date.now() - requestStartedAt;
 
     let language = lang;
@@ -1719,7 +1745,7 @@ async function handlePolish(body, requestSignal) {
           system,
           user: correctedInput,
           requestSignal,
-          maxTokens: resolvePolishMaxTokens(mode, correctedInput)
+          maxTokens: resolvePolishMaxTokens(mode, correctedInput, targetLanguageForced)
         });
         timings.modelAttempts = attempts;
         timings.modelMs = Date.now() - modelStartedAt;

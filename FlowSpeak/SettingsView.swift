@@ -5,7 +5,7 @@
 //  Created by Adrian Auke on 20/02/2026.
 //
 
-
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -20,170 +20,189 @@ struct SettingsView: View {
     @State private var supabaseAuthBusy: Bool = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Settings")
-                    .font(.system(size: 28, weight: .bold, design: .serif))
-                    .foregroundStyle(AppTheme.primaryText)
+        ZStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Settings")
+                        .font(.system(size: 28, weight: .bold, design: .serif))
+                        .foregroundStyle(AppTheme.primaryText)
 
-                Text("Hold `fn` for å starte diktering. Slipp `fn` for å sette inn teksten. Hold `fn+Shift` for oversettelse i én diktering. Marker tekst, hold `fn+Control` mens du sier rewrite-instruksjonen, og slipp `fn` for å kjøre.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(AppTheme.secondaryText)
+                    Text("Hold `fn` for å starte diktering. Slipp `fn` for å sette inn teksten. Hold `fn+Shift` for oversettelse i én diktering. Marker tekst, hold `fn+Control` mens du sier rewrite-instruksjonen, og slipp `fn` for å kjøre.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(AppTheme.secondaryText)
 
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        settingRow(title: "Språk") {
-                            languagePicker(selection: $settings.appLanguage, width: 220)
-                        }
-
-                        settingRow(title: "Translate") {
-                            languagePicker(selection: $settings.translationTargetLanguage, width: 220)
-                        }
-
-                        settingRow(title: "Stil") {
-                            stylePicker(selection: $settings.writingStyle, width: 220)
-                        }
-
-                        settingRow(title: "Default innsettingsmodus") {
-                            modePicker(selection: $settings.globalMode, width: 320)
-                        }
-
-                        settingRow(title: "Mikrofon") {
-                            HStack(spacing: 8) {
-                                microphonePicker(selection: $settings.selectedMicrophoneUID, width: 380)
-
-                                Button {
-                                    refreshMicrophones()
-                                } label: {
-                                    Image(systemName: "arrow.clockwise")
-                                }
-                                .buttonStyle(StoreSecondaryButtonStyle())
-                                .help("Oppdater mikrofonliste")
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            settingRow(title: "Språk") {
+                                languagePicker(selection: $settings.appLanguage, width: 220)
                             }
-                        }
 
-                        settingRow(title: "Backend URL") {
-                            TextField(AppSettings.defaultBackendBaseURL, text: $settings.backendBaseURL)
-                                .textFieldStyle(.plain)
-                                .storeField(maxWidth: 520)
-                        }
+                            settingRow(title: "Translate") {
+                                languagePicker(selection: $settings.translationTargetLanguage, width: 220)
+                            }
 
-                        settingRow(title: "Backend token/JWT") {
-                            HStack(spacing: 8) {
-                                SecureField("Bearer token or JWT", text: $settings.backendToken)
+                            settingRow(title: "Stil") {
+                                stylePicker(selection: $settings.writingStyle, width: 220)
+                            }
+
+                            settingRow(title: "Default innsettingsmodus") {
+                                modePicker(selection: $settings.globalMode, width: 320)
+                            }
+
+                            settingRow(title: "Mikrofon") {
+                                HStack(spacing: 8) {
+                                    microphonePicker(selection: $settings.selectedMicrophoneUID, width: 380)
+
+                                    Button {
+                                        refreshMicrophones()
+                                    } label: {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                    .help("Oppdater mikrofonliste")
+                                }
+                            }
+
+                            settingRow(title: "Backend URL") {
+                                TextField(AppSettings.defaultBackendBaseURL, text: $settings.backendBaseURL)
                                     .textFieldStyle(.plain)
                                     .storeField(maxWidth: 520)
+                            }
 
-                                if !settings.backendToken.isEmpty {
-                                    Button("Clear") {
-                                        settings.backendToken = ""
+                            settingRow(title: "Backend token/JWT") {
+                                HStack(spacing: 8) {
+                                    SecureField("Bearer token or JWT", text: $settings.backendToken)
+                                        .textFieldStyle(.plain)
+                                        .storeField(maxWidth: 520)
+
+                                    if !settings.backendToken.isEmpty {
+                                        Button("Copy") {
+                                            copyBackendToken()
+                                        }
+                                        .buttonStyle(StoreSecondaryButtonStyle())
+
+                                        Button("Clear") {
+                                            settings.backendToken = ""
+                                        }
+                                        .buttonStyle(StoreSecondaryButtonStyle())
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        Text("General")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .groupBoxStyle(StoreGroupBoxStyle())
+
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if settings.hasSupabaseSession {
+                                settingRow(title: "Logged in as") {
+                                    readOnlyValue(settings.supabaseUserEmail.isEmpty ? "Unknown account" : settings.supabaseUserEmail)
+                                }
+
+                                HStack(spacing: 8) {
+                                    Button("Sign out") {
+                                        signOutSupabase()
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                    .disabled(supabaseAuthBusy)
+
+                                    Button("Advanced auth settings") {
+                                        showsAdvancedAuthSettings = true
                                     }
                                     .buttonStyle(StoreSecondaryButtonStyle())
                                 }
-                            }
-                        }
-                    }
-                } label: {
-                    Text("General")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .groupBoxStyle(StoreGroupBoxStyle())
-
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if settings.hasSupabaseSession {
-                            settingRow(title: "Logged in as") {
-                                readOnlyValue(settings.supabaseUserEmail.isEmpty ? "Unknown account" : settings.supabaseUserEmail)
-                            }
-
-                            HStack(spacing: 8) {
-                                Button("Sign out") {
-                                    signOutSupabase()
-                                }
-                                .buttonStyle(StoreSecondaryButtonStyle())
-                                .disabled(supabaseAuthBusy)
+                            } else {
+                                Text("Not signed in. Use the main window to log in, or open advanced auth settings for setup.")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(AppTheme.secondaryText)
 
                                 Button("Advanced auth settings") {
                                     showsAdvancedAuthSettings = true
                                 }
                                 .buttonStyle(StoreSecondaryButtonStyle())
                             }
-                        } else {
-                            Text("Not signed in. Use the main window to log in, or open advanced auth settings for setup.")
+
+                            Text(supabaseStatusText)
                                 .font(.system(size: 12))
                                 .foregroundStyle(AppTheme.secondaryText)
-
-                            Button("Advanced auth settings") {
-                                showsAdvancedAuthSettings = true
-                            }
-                            .buttonStyle(StoreSecondaryButtonStyle())
                         }
+                    } label: {
+                        Text("Account")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .groupBoxStyle(StoreGroupBoxStyle())
 
-                        Text(supabaseStatusText)
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("Maks lagrede diktater")
+                                Spacer()
+                                Stepper(
+                                    value: historyMaxEntriesBinding,
+                                    in: 20...2000,
+                                    step: 20
+                                ) {
+                                    Text("\(history.maxEntries)")
+                                        .frame(width: 58, alignment: .trailing)
+                                }
+                                .frame(width: 180)
+                            }
+
+                            HStack {
+                                Text("Lagringer nå: \(history.entries.count)")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(AppTheme.secondaryText)
+                                Spacer()
+                                Button("Tøm historikk") {
+                                    history.clearAll()
+                                }
+                                .buttonStyle(StoreSecondaryButtonStyle())
+                            }
+                        }
+                    } label: {
+                        Text("History")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .groupBoxStyle(StoreGroupBoxStyle())
+
+                    GroupBox {
+                        Text("Permissions: aktiver FlowSpeak i Privacy & Security → Accessibility + Input Monitoring.")
                             .font(.system(size: 12))
                             .foregroundStyle(AppTheme.secondaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } label: {
+                        Text("Permissions")
+                            .font(.system(size: 13, weight: .semibold))
                     }
-                } label: {
-                    Text("Account")
-                        .font(.system(size: 13, weight: .semibold))
+                    .groupBoxStyle(StoreGroupBoxStyle())
                 }
-                .groupBoxStyle(StoreGroupBoxStyle())
-
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("Maks lagrede diktater")
-                            Spacer()
-                            Stepper(
-                                value: historyMaxEntriesBinding,
-                                in: 20...2000,
-                                step: 20
-                            ) {
-                                Text("\(history.maxEntries)")
-                                    .frame(width: 58, alignment: .trailing)
-                            }
-                            .frame(width: 180)
-                        }
-
-                        HStack {
-                            Text("Lagringer nå: \(history.entries.count)")
-                                .font(.system(size: 12))
-                                .foregroundStyle(AppTheme.secondaryText)
-                            Spacer()
-                            Button("Tøm historikk") {
-                                history.clearAll()
-                            }
-                            .buttonStyle(StoreSecondaryButtonStyle())
-                        }
-                    }
-                } label: {
-                    Text("History")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .groupBoxStyle(StoreGroupBoxStyle())
-
-                GroupBox {
-                    Text("Permissions: aktiver FlowSpeak i Privacy & Security → Accessibility + Input Monitoring.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } label: {
-                    Text("Permissions")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .groupBoxStyle(StoreGroupBoxStyle())
+                .padding(18)
             }
-            .padding(18)
+            .background(AppTheme.canvas)
+            .disabled(showsAdvancedAuthSettings)
+            .blur(radius: showsAdvancedAuthSettings ? 1.5 : 0)
+
+            if showsAdvancedAuthSettings {
+                Color.black.opacity(0.14)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        showsAdvancedAuthSettings = false
+                    }
+
+                advancedAuthOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
         }
         .background(AppTheme.canvas)
+        .animation(.easeOut(duration: 0.16), value: showsAdvancedAuthSettings)
         .onAppear {
             refreshMicrophones()
             if supabaseEmailInput.isEmpty {
                 supabaseEmailInput = settings.supabaseUserEmail
             }
-        }
-        .sheet(isPresented: $showsAdvancedAuthSettings) {
-            advancedAuthSheet
         }
     }
 
@@ -250,7 +269,7 @@ struct SettingsView: View {
             )
     }
 
-    private var advancedAuthSheet: some View {
+    private var advancedAuthOverlay: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Advanced Auth Settings")
@@ -321,8 +340,19 @@ struct SettingsView: View {
             }
             .padding(18)
         }
-        .background(AppTheme.canvas)
+        .background(
+            RoundedRectangle(cornerRadius: 22)
+                .fill(AppTheme.canvas)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22)
+                        .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                )
+        )
         .frame(width: 640, height: 500)
+        .shadow(color: .black.opacity(0.18), radius: 24, y: 10)
+        .onTapGesture {
+            // Prevent clicks inside the card from dismissing the overlay.
+        }
     }
 
     private func refreshMicrophones() {
@@ -398,6 +428,15 @@ struct SettingsView: View {
         settings.signOutSupabaseSession()
         supabasePasswordInput = ""
         supabaseAuthStatus = "Signed out."
+    }
+
+    private func copyBackendToken() {
+        let token = settings.backendToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(token, forType: .string)
     }
 
     private func performSupabaseAuth(
