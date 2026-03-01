@@ -882,7 +882,13 @@ function buildDictionaryPromptClause(dictionary) {
   return clause;
 }
 
-async function requestModelDraft({ system, user, requestSignal, maxTokens = OPENAI_MAX_TOKENS_POLISH }) {
+async function requestModelDraft({
+  system,
+  user,
+  requestSignal,
+  maxTokens = OPENAI_MAX_TOKENS_POLISH,
+  wantsJsonOutput = true
+}) {
   const attemptStats = [];
   let lastError = null;
   const overallStartedAt = Date.now();
@@ -913,22 +919,25 @@ async function requestModelDraft({ system, user, requestSignal, maxTokens = OPEN
       }
       let response;
       try {
+        const payload = {
+          model: MODEL,
+          temperature: 0,
+          max_tokens: Math.max(32, Math.min(Number(maxTokens || OPENAI_MAX_TOKENS_POLISH), 400)),
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user }
+          ]
+        };
+        if (wantsJsonOutput) {
+          payload.response_format = { type: "json_object" };
+        }
         const http = await fetch(`${OPENAI_API_BASE_URL}/chat/completions`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${OPENAI_API_KEY}`,
           },
-          body: JSON.stringify({
-            model: MODEL,
-            temperature: 0,
-            max_tokens: Math.max(32, Math.min(Number(maxTokens || OPENAI_MAX_TOKENS_POLISH), 400)),
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: user }
-            ],
-            response_format: { type: "json_object" }
-          }),
+          body: JSON.stringify(payload),
           signal: controller.signal
         });
         const bodyText = await http.text();
@@ -1586,6 +1595,9 @@ function resolvePolishMaxTokens(mode, text, targetLanguageForced) {
   const textLength = String(text || "").trim().length;
 
   // Short translations do not need the broader drafting token budget.
+  if (targetLanguageForced && textLength <= 80) {
+    return Math.max(32, Math.min(64, OPENAI_MAX_TOKENS_POLISH_TRANSLATE));
+  }
   if (targetLanguageForced && textLength <= 220) {
     return OPENAI_MAX_TOKENS_POLISH_TRANSLATE;
   }
@@ -1601,7 +1613,7 @@ function resolvePolishMaxTokens(mode, text, targetLanguageForced) {
 
 function buildPolishSystemPrompt({ mode, style, lang, url, ctx, dictionaryRule, targetLanguageForced }) {
   if (targetLanguageForced) {
-    return `Translate the user's text into ${lang}. Preserve meaning, names, numbers, and formatting. Do not add commentary, alternatives, or extra context. Return exactly one final translation only. ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}`;
+    return `Translate the user's text into ${lang}. Preserve meaning, names, numbers, and formatting. Do not add commentary, alternatives, or extra context. Return exactly one final translation only as plain text. ${dictionaryRule}`;
   }
 
   const langRule = `Output language must be ${lang}. Do not translate into any other language.`;
@@ -1745,18 +1757,22 @@ async function handlePolish(body, requestSignal) {
           system,
           user: correctedInput,
           requestSignal,
-          maxTokens: resolvePolishMaxTokens(mode, correctedInput, targetLanguageForced)
+          maxTokens: resolvePolishMaxTokens(mode, correctedInput, targetLanguageForced),
+          wantsJsonOutput: !targetLanguageForced
         });
         timings.modelAttempts = attempts;
         timings.modelMs = Date.now() - modelStartedAt;
         const postprocessStartedAt = Date.now();
 
         const raw = response?.choices?.[0]?.message?.content || "";
-        let parsed;
-        try { parsed = JSON.parse(raw); }
-        catch { parsed = { language: "unknown", text: raw }; }
-
-        const modelText = String(parsed.text || "").trim();
+        const modelText = targetLanguageForced
+          ? String(raw || "").trim()
+          : (() => {
+              let parsed;
+              try { parsed = JSON.parse(raw); }
+              catch { parsed = { language: "unknown", text: raw }; }
+              return String(parsed.text || "").trim();
+            })();
         if (!modelText) {
           usedFallback = true;
         } else {
