@@ -5,7 +5,7 @@
 	<key>CFBundleIdentifier</key>
 	<string>com.flowspeak.app</string>
 	<key>FlowSpeakBackendBaseURL</key>
-	<string>https://flowspeak-backend.onrender.com</string>
+	<string>https://flowspeak39-eu.onrender.com</string>
 	<key>FlowSpeakSupabaseProjectURL</key>
 	<string>https://zfvjmcgmgnyrryghriqj.supabase.co</string>
 	<key>FlowSpeakSupabaseAnonKey</key>

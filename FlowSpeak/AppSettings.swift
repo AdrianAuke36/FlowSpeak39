@@ -231,6 +231,9 @@ final class AppSettings: ObservableObject {
 
     static let defaultBackendBaseURL = "http://127.0.0.1:3000"
     static let defaultSupabaseProjectURL = ""
+    private static let legacyHostedBackendURLs: Set<String> = [
+        "https://flowspeak-backend.onrender.com"
+    ]
     private static let infoBackendBaseURLKey = "FlowSpeakBackendBaseURL"
     private static let infoSupabaseProjectURLKey = "FlowSpeakSupabaseProjectURL"
     private static let infoSupabaseAnonKeyKey = "FlowSpeakSupabaseAnonKey"
@@ -382,7 +385,13 @@ final class AppSettings: ObservableObject {
 
         let bootstrapBackendURL = Self.bootstrapBackendBaseURL()
         let rawBackendBaseURL = UserDefaults.standard.string(forKey: StorageKey.backendBaseURL) ?? bootstrapBackendURL
-        self.backendBaseURL = Self.normalizedBackendBaseURL(rawBackendBaseURL)
+        let normalizedBackendURL = Self.normalizedBackendBaseURL(rawBackendBaseURL)
+        if Self.legacyHostedBackendURLs.contains(normalizedBackendURL),
+           normalizedBackendURL != bootstrapBackendURL {
+            self.backendBaseURL = bootstrapBackendURL
+        } else {
+            self.backendBaseURL = normalizedBackendURL
+        }
 
         let envToken = ProcessInfo.processInfo.environment["FLOWSPEAK_BACKEND_TOKEN"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
