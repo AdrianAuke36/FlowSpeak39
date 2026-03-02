@@ -81,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyLanguage(settings.appLanguage, persist: false)
         applyTranslationTarget(settings.translationTargetLanguage, persist: false)
         applyStyle(settings.writingStyle, persist: false)
+        applyInterpretationLevel(settings.interpretationLevel, persist: false)
         applyBackendConfiguration(
             baseURL: settings.backendBaseURL,
             token: settings.backendToken,
@@ -132,6 +133,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .removeDuplicates()
             .sink { [weak self] style in
                 self?.applyStyle(style, persist: false)
+            }
+            .store(in: &cancellables)
+
+        settings.$interpretationLevel
+            .removeDuplicates()
+            .sink { [weak self] interpretationLevel in
+                self?.applyInterpretationLevel(interpretationLevel, persist: false)
             }
             .store(in: &cancellables)
 
@@ -961,6 +969,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         dictation.setStyle(style)
         refreshStyleMenuState()
+    }
+
+    private func applyInterpretationLevel(_ interpretationLevel: InterpretationLevel, persist: Bool) {
+        if persist {
+            settings.interpretationLevel = interpretationLevel
+        }
+        dictation.setInterpretationLevel(interpretationLevel)
     }
 
     private func applyBackendConfiguration(baseURL: String, token: String, persist: Bool) {

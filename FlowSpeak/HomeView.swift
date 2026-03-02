@@ -7,6 +7,7 @@ import SwiftUI
 struct HomeView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var activePage: Page = .home
+    @State private var permissionRefreshNonce: Int = 0
 
     enum Page: CaseIterable, Identifiable {
         case home
@@ -36,22 +37,29 @@ struct HomeView: View {
         Group {
             // Gate the main shell until we have either a live JWT or a refresh token we can rotate.
             if settings.hasAuthenticatedSession {
-                if settings.hasCompletedSetupOnboarding {
+                if shouldShowSetupOnboarding {
+                    SetupOnboardingView()
+                } else {
                     HStack(spacing: 0) {
                         Sidebar(activePage: $activePage)
                         Divider()
                         pageContent
                     }
                     .background(AppTheme.canvas)
-                } else {
-                    SetupOnboardingView()
                 }
             } else {
                 AuthGateView()
             }
         }
-        .frame(width: 980, height: 640)
+        .frame(minWidth: 1160, minHeight: 760)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.light)
+        .onAppear {
+            refreshPermissionGate()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissionGate()
+        }
     }
 
     @ViewBuilder
@@ -64,6 +72,22 @@ struct HomeView: View {
         case .settings:
             SettingsView()
         }
+    }
+
+    private var shouldShowSetupOnboarding: Bool {
+        _ = permissionRefreshNonce
+        return !settings.hasCompletedSetupOnboarding || Self.hasMissingCriticalPermissions
+    }
+
+    private func refreshPermissionGate() {
+        permissionRefreshNonce += 1
+    }
+
+    private static var hasMissingCriticalPermissions: Bool {
+        SFSpeechRecognizer.authorizationStatus() != .authorized ||
+        AVCaptureDevice.authorizationStatus(for: .audio) != .authorized ||
+        !AXIsProcessTrusted() ||
+        !CGPreflightListenEventAccess()
     }
 }
 
@@ -262,11 +286,21 @@ struct AuthGateView: View {
                         Text(mode.alternatePrompt)
                             .foregroundStyle(AppTheme.secondaryText)
                         Button(mode.alternateLabel, action: toggleMode)
-                        .buttonStyle(.plain)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(AppTheme.accent)
+                            .buttonStyle(.plain)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(AppTheme.accent)
                     }
                     .font(.system(size: 13, weight: .medium))
+
+                    if mode == .signIn {
+                        Button("Forgot password?") {
+                            requestPasswordReset()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .disabled(isBusy || showsConfigurationWarning)
+                    }
                 }
                 .padding(32)
                 .frame(width: 420)
@@ -385,6 +419,28 @@ struct AuthGateView: View {
         statusText = ""
         if mode == .signIn {
             password = ""
+        }
+    }
+
+    private func requestPasswordReset() {
+        guard !isBusy else { return }
+        guard !showsConfigurationWarning else {
+            statusText = "Auth is not configured yet."
+            return
+        }
+
+        isBusy = true
+        statusText = "Sending reset email..."
+
+        Task {
+            defer { isBusy = false }
+
+            do {
+                try await settings.requestSupabasePasswordReset(email: email)
+                statusText = "If the account exists, a password reset email has been sent."
+            } catch {
+                statusText = error.localizedDescription
+            }
         }
     }
 }
@@ -787,9 +843,19 @@ struct SetupOnboardingView: View {
         inputMonitoringGranted = CGPreflightListenEventAccess()
 
         if speechGranted && microphoneGranted && accessibilityGranted && inputMonitoringGranted {
+            statusText = ""
             settings.completeSetupOnboarding()
             return
         }
+
+        step = firstIncompleteStep
+    }
+
+    private var firstIncompleteStep: SetupOnboardingStep {
+        if !speechGranted { return .speechRecognition }
+        if !microphoneGranted { return .microphone }
+        if !accessibilityGranted { return .accessibility }
+        return .inputMonitoring
     }
 
     private var stepIconName: String {

@@ -8,12 +8,13 @@ struct FlowLiteApp: App {
         Window("FlowSpeak Beta", id: "home") {
             HomeView()
         }
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1160, height: 760)
+        .windowResizability(.contentMinSize)
         .defaultPosition(.center)
 
         Settings {
             SettingsView()
-                .frame(width: 760, height: 520)
+                .frame(minWidth: 860, minHeight: 620)
         }
     }
 }

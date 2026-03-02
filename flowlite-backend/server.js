@@ -97,8 +97,13 @@ const RATE_LIMIT_MAX_AUTH_FREE = Math.max(1, Number(process.env.RATE_LIMIT_MAX_A
 const RATE_LIMIT_MAX_AUTH_PRO = Math.max(1, Number(process.env.RATE_LIMIT_MAX_AUTH_PRO || RATE_LIMIT_MAX_AUTH));
 const RATE_LIMIT_MAX_AUTH_TEAM = Math.max(1, Number(process.env.RATE_LIMIT_MAX_AUTH_TEAM || RATE_LIMIT_MAX_AUTH));
 const RATE_LIMIT_MAX_AUTH_ENTERPRISE = Math.max(1, Number(process.env.RATE_LIMIT_MAX_AUTH_ENTERPRISE || RATE_LIMIT_MAX_AUTH));
+const DAILY_USAGE_MAX_AUTH_FREE = Math.max(0, Number(process.env.DAILY_USAGE_MAX_AUTH_FREE || 1_200));
+const DAILY_USAGE_MAX_AUTH_PRO = Math.max(0, Number(process.env.DAILY_USAGE_MAX_AUTH_PRO || 5_000));
+const DAILY_USAGE_MAX_AUTH_TEAM = Math.max(0, Number(process.env.DAILY_USAGE_MAX_AUTH_TEAM || 10_000));
+const DAILY_USAGE_MAX_AUTH_ENTERPRISE = Math.max(0, Number(process.env.DAILY_USAGE_MAX_AUTH_ENTERPRISE || 25_000));
 const TRUSTED_PROXY_IPS = parseListEnv(process.env.TRUSTED_PROXY_IPS || "");
 const RATE_LIMIT_BUCKETS = new Map();
+const DAILY_USAGE_BUCKETS = new Map();
 const RATE_LIMIT_REDIS_URL = String(process.env.RATE_LIMIT_REDIS_URL || process.env.UPSTASH_REDIS_REST_URL || "").trim().replace(/\/+$/, "");
 const RATE_LIMIT_REDIS_TOKEN = String(process.env.RATE_LIMIT_REDIS_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
 const RATE_LIMIT_REDIS_PREFIX = String(process.env.RATE_LIMIT_REDIS_PREFIX || "flowspeak:rl").trim() || "flowspeak:rl";
@@ -215,6 +220,98 @@ function resolveAuthenticatedRateLimit(plan) {
   if (normalizedPlan === "team") return RATE_LIMIT_MAX_AUTH_TEAM;
   if (normalizedPlan === "pro") return RATE_LIMIT_MAX_AUTH_PRO;
   return RATE_LIMIT_MAX_AUTH_FREE;
+}
+
+function resolveDailyUsageLimit(plan) {
+  const normalizedPlan = normalizePlan(plan);
+  if (normalizedPlan === "enterprise") return DAILY_USAGE_MAX_AUTH_ENTERPRISE;
+  if (normalizedPlan === "team") return DAILY_USAGE_MAX_AUTH_TEAM;
+  if (normalizedPlan === "pro") return DAILY_USAGE_MAX_AUTH_PRO;
+  if (normalizedPlan === "public") return 0;
+  return DAILY_USAGE_MAX_AUTH_FREE;
+}
+
+function currentUsageDayKey(now = Date.now()) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+function cleanupDailyUsageBuckets(dayKey = currentUsageDayKey()) {
+  const prefix = `${dayKey}:`;
+  for (const key of DAILY_USAGE_BUCKETS.keys()) {
+    if (!key.startsWith(prefix)) {
+      DAILY_USAGE_BUCKETS.delete(key);
+    }
+  }
+}
+
+function peekDailyUsage(principalKey, plan) {
+  const normalizedPlan = normalizePlan(plan);
+  const limit = resolveDailyUsageLimit(normalizedPlan);
+  const dayKey = currentUsageDayKey();
+  cleanupDailyUsageBuckets(dayKey);
+
+  if (limit <= 0) {
+    return {
+      dayKey,
+      plan: normalizedPlan,
+      limit: 0,
+      used: 0,
+      remaining: 0,
+      enabled: false
+    };
+  }
+
+  const bucket = DAILY_USAGE_BUCKETS.get(`${dayKey}:${principalKey}`);
+  const used = Number(bucket?.count || 0);
+  return {
+    dayKey,
+    plan: normalizedPlan,
+    limit,
+    used,
+    remaining: Math.max(0, limit - used),
+    enabled: true
+  };
+}
+
+function consumeDailyUsage(principalKey, plan) {
+  const normalizedPlan = normalizePlan(plan);
+  const limit = resolveDailyUsageLimit(normalizedPlan);
+  const dayKey = currentUsageDayKey();
+  cleanupDailyUsageBuckets(dayKey);
+
+  if (limit <= 0) {
+    return {
+      dayKey,
+      plan: normalizedPlan,
+      limit: 0,
+      used: 0,
+      remaining: 0,
+      enabled: false,
+      allowed: true
+    };
+  }
+
+  const key = `${dayKey}:${principalKey}`;
+  const bucket = DAILY_USAGE_BUCKETS.get(key) || {
+    count: 0,
+    plan: normalizedPlan,
+    lastSeenAt: 0
+  };
+
+  bucket.count += 1;
+  bucket.plan = normalizedPlan;
+  bucket.lastSeenAt = Date.now();
+  DAILY_USAGE_BUCKETS.set(key, bucket);
+
+  return {
+    dayKey,
+    plan: normalizedPlan,
+    limit,
+    used: bucket.count,
+    remaining: Math.max(0, limit - bucket.count),
+    enabled: true,
+    allowed: bucket.count <= limit
+  };
 }
 
 function decodeBase64Url(input) {
@@ -680,6 +777,33 @@ function summarizePolishMetrics() {
   };
 }
 
+function summarizeDailyUsage() {
+  const dayKey = currentUsageDayKey();
+  cleanupDailyUsageBuckets(dayKey);
+
+  const buckets = [];
+  for (const [key, bucket] of DAILY_USAGE_BUCKETS.entries()) {
+    if (!key.startsWith(`${dayKey}:`) || !bucket) continue;
+    buckets.push(bucket);
+  }
+
+  const byPlan = {};
+  let totalRequests = 0;
+  for (const bucket of buckets) {
+    const plan = normalizePlan(bucket.plan || "free");
+    const count = Number(bucket.count || 0);
+    totalRequests += count;
+    byPlan[plan] = (byPlan[plan] || 0) + count;
+  }
+
+  return {
+    dayKey,
+    activeUsers: buckets.length,
+    totalRequests,
+    byPlan
+  };
+}
+
 function buildFastpathCacheKey(body) {
   const normalized = {
     text: String(body?.text || "").trim(),
@@ -1005,10 +1129,22 @@ const STYLE_RULES = {
   excited: "Style: excited. Keep it positive and energetic with occasional exclamation marks, but do not overdo it."
 };
 
+const INTERPRETATION_RULES = {
+  literal: "Interpretation: literal. Stay as close as possible to the spoken wording and order. Preserve phrasing, hesitations, and sentence structure unless something is clearly a recognition artifact.",
+  balanced: "Interpretation: balanced. Clean up the text while staying close to what the user said.",
+  meaning: "Interpretation: meaning. Optimize for clarity and intended meaning. You may rephrase awkward wording, merge fragments, and remove hesitations, but do not add new facts."
+};
+
 function normalizeStyle(raw) {
   const v = String(raw || "").trim().toLowerCase();
   if (v === "clean" || v === "formal" || v === "casual" || v === "excited") return v;
   return "clean";
+}
+
+function normalizeInterpretationLevel(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (v === "literal" || v === "balanced" || v === "meaning") return v;
+  return "balanced";
 }
 
 function replaceLastMatch(text, pattern, replacement) {
@@ -1313,7 +1449,20 @@ function basicPolish(text) {
   return out;
 }
 
-function localPolish(text, mode) {
+function basicLiteralPolish(text) {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+([,.;!?])/g, "$1")
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function localPolish(text, mode, interpretationLevel = "balanced") {
+  if (interpretationLevel === "literal") {
+    return basicLiteralPolish(text);
+  }
+
   const corrected = applySelfCorrections(text);
   const withoutFillers = removeFillerWords(corrected);
   const clean = basicPolish(withoutFillers);
@@ -1505,12 +1654,14 @@ function preferTargetLanguageSection(text, targetLanguage) {
   return out;
 }
 
-function sanitizeModelOutput(text, mode, targetLanguage) {
+function sanitizeModelOutput(text, mode, targetLanguage, interpretationLevel = "balanced") {
   let out = String(text || "").replace(/\r\n/g, "\n").trim();
   if (!out) return out;
 
-  out = applySelfCorrections(out);
-  out = removeFillerWords(out);
+  if (interpretationLevel !== "literal") {
+    out = applySelfCorrections(out);
+    out = removeFillerWords(out);
+  }
   if (/\b(?:No|Nei)\.\s*$/i.test(out) && /[.!?]/.test(out.replace(/\b(?:No|Nei)\.\s*$/i, ""))) {
     out = out.replace(/\s*\b(?:No|Nei)\.\s*$/i, "").trim();
   }
@@ -1523,6 +1674,14 @@ function sanitizeModelOutput(text, mode, targetLanguage) {
     out = normalizeEmailBody(out);
   }
   return out;
+}
+
+function finalizePolishOutput(text, { style, mode, interpretationLevel }) {
+  const locallyPolished = localPolish(text, mode, interpretationLevel);
+  const styled = interpretationLevel === "literal"
+    ? locallyPolished
+    : applyStyleHeuristics(locallyPolished, style, mode);
+  return normalizePunctuationArtifacts(styled);
 }
 
 function isBrowserBundle(bundleId) {
@@ -1611,14 +1770,32 @@ function resolvePolishMaxTokens(mode, text, targetLanguageForced) {
   return OPENAI_MAX_TOKENS_POLISH;
 }
 
-function buildPolishSystemPrompt({ mode, style, lang, url, ctx, dictionaryRule, targetLanguageForced }) {
+function buildPolishSystemPrompt({
+  mode,
+  style,
+  lang,
+  url,
+  ctx,
+  dictionaryRule,
+  targetLanguageForced,
+  interpretationLevel
+}) {
   if (targetLanguageForced) {
-    return `Translate the user's text into ${lang}. Preserve meaning, names, numbers, and formatting. Do not add commentary, alternatives, or extra context. Return exactly one final translation only as plain text. ${dictionaryRule}`;
+    const translationRule = interpretationLevel === "literal"
+      ? "Translate as literally as possible. Stay close to the source wording and structure unless a direct translation would be unclear."
+      : interpretationLevel === "meaning"
+        ? "Translate for intended meaning and readability. You may rephrase awkward wording so the result reads naturally."
+        : "Preserve meaning, names, numbers, and formatting.";
+
+    return `Translate the user's text into ${lang}. ${translationRule} Do not add commentary, alternatives, or extra context. Return exactly one final translation only as plain text. ${dictionaryRule}`;
   }
 
   const langRule = `Output language must be ${lang}. Do not translate into any other language.`;
   const modeRule = MODE_RULES[mode] || MODE_RULES.generic;
-  const styleRule = STYLE_RULES[style] || STYLE_RULES.clean;
+  const styleRule = interpretationLevel === "literal"
+    ? "Keep style changes to an absolute minimum."
+    : (STYLE_RULES[style] || STYLE_RULES.clean);
+  const interpretationRule = INTERPRETATION_RULES[interpretationLevel] || INTERPRETATION_RULES.balanced;
 
   let contextBlock = "";
   if (mode !== "generic") {
@@ -1636,18 +1813,24 @@ function buildPolishSystemPrompt({ mode, style, lang, url, ctx, dictionaryRule, 
     ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
     : "";
 
-  return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${langRule} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${recipientRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
+  return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${recipientRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
 
-function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text }) {
+function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text, interpretationLevel }) {
   if (!POLISH_LOCAL_FASTPATH_ENABLED) return false;
   if (targetLanguageForced) return false;
+
+  const normalizedInterpretationLevel = normalizeInterpretationLevel(interpretationLevel);
+  if (normalizedInterpretationLevel === "meaning") return false;
 
   const normalizedMode = String(mode || "generic").trim().toLowerCase();
   if (normalizedMode !== "generic" && normalizedMode !== "chat_message" && normalizedMode !== "note") {
     return false;
   }
-  if (String(style || "clean").trim().toLowerCase() !== "clean") return false;
+  if (
+    normalizedInterpretationLevel !== "literal"
+    && String(style || "clean").trim().toLowerCase() !== "clean"
+  ) return false;
 
   const clean = String(text || "").trim();
   if (!clean) return false;
@@ -1823,6 +2006,7 @@ async function handlePolish(body, requestSignal) {
 
     const requestedMode = String(body?.mode || "generic");
     const style = normalizeStyle(body?.style);
+    const interpretationLevel = normalizeInterpretationLevel(body?.interpretationLevel);
     const bundleId = String(body?.bundleId || "");
     const appName = String(body?.appName || "");
     const lang = normalizeTargetLanguage(body?.targetLanguage);
@@ -1836,7 +2020,10 @@ async function handlePolish(body, requestSignal) {
     const fieldMeta = [appName, axDescription, axHelp, axTitle, axPlaceholder].join(" ");
     const mode = inferMode(requestedMode, bundleId, url, ctx, fieldMeta);
     const dictionary = getRequestDictionary(body);
-    const correctedInput = applyDictionaryReplacements(applySelfCorrections(text), dictionary);
+    const preparedInput = interpretationLevel === "literal"
+      ? text
+      : applySelfCorrections(text);
+    const correctedInput = applyDictionaryReplacements(preparedInput, dictionary);
 
     console.log(
       "📨 mode:",
@@ -1845,6 +2032,8 @@ async function handlePolish(body, requestSignal) {
       mode,
       "| style:",
       style,
+      "| interpretation:",
+      interpretationLevel,
       "| lang:",
       lang,
       "| urlHost:",
@@ -1872,14 +2061,17 @@ async function handlePolish(body, requestSignal) {
       url,
       ctx,
       dictionaryRule,
-      targetLanguageForced
+      targetLanguageForced,
+      interpretationLevel
     });
     timings.preprocessMs = Date.now() - requestStartedAt;
 
     let language = lang;
-    let finalText = normalizePunctuationArtifacts(
-      applyStyleHeuristics(localPolish(correctedInput, mode), style, mode)
-    );
+    let finalText = finalizePolishOutput(correctedInput, {
+      style,
+      mode,
+      interpretationLevel
+    });
     let usedFallback = false;
     let usedLocalFastpath = false;
 
@@ -1887,7 +2079,8 @@ async function handlePolish(body, requestSignal) {
       mode,
       style,
       targetLanguageForced,
-      text: correctedInput
+      text: correctedInput,
+      interpretationLevel
     })) {
       usedLocalFastpath = true;
     } else if (!hasOpenAI) {
@@ -1919,12 +2112,19 @@ async function handlePolish(body, requestSignal) {
         if (!modelText) {
           usedFallback = true;
         } else {
-          const modelOut = sanitizeModelOutput(modelText, mode, lang);
-          const normalizedModelOut = normalizePunctuationArtifacts(
-            applyStyleHeuristics(localPolish(
-              applyDictionaryReplacements(modelOut, dictionary),
-              mode
-            ), style, mode)
+          const modelOut = sanitizeModelOutput(
+            modelText,
+            mode,
+            lang,
+            interpretationLevel
+          );
+          const normalizedModelOut = finalizePolishOutput(
+            applyDictionaryReplacements(modelOut, dictionary),
+            {
+              style,
+              mode,
+              interpretationLevel
+            }
           );
 
           if (hasCriticalTimeDrift(correctedInput, normalizedModelOut)) {
@@ -1994,25 +2194,31 @@ async function handlePolish(body, requestSignal) {
 }
 
 async function handleRewrite(body, requestSignal) {
+  const requestStartedAt = Date.now();
+  const timings = {
+    preprocessMs: 0,
+    modelMs: 0,
+    postprocessMs: 0,
+    totalMs: 0,
+    modelAttempts: []
+  };
+  let instruction = "";
+  let lang = DEFAULT_TARGET_LANGUAGE;
+  let style = "clean";
+  let correctedInput = "";
+  let effectiveOutputLanguage = DEFAULT_TARGET_LANGUAGE;
+  let allowsLanguageChange = false;
+
   try {
     if (requestSignal?.aborted) {
       return { status: 499, json: { error: "Client closed request." } };
     }
 
-    const requestStartedAt = Date.now();
-    const timings = {
-      preprocessMs: 0,
-      modelMs: 0,
-      postprocessMs: 0,
-      totalMs: 0,
-      modelAttempts: []
-    };
-
     const text = String(body?.text || "").trim();
     if (!text) return { status: 400, json: { error: "Missing text." } };
     if (text.length > 10_000) return { status: 413, json: { error: "Too long." } };
 
-    const instruction = String(body?.instruction || "").replace(/\s+/g, " ").trim();
+    instruction = String(body?.instruction || "").replace(/\s+/g, " ").trim();
     if (!instruction) return { status: 400, json: { error: "Missing instruction." } };
     if (instruction.length > 320) return { status: 413, json: { error: "Instruction too long." } };
 
@@ -2020,13 +2226,13 @@ async function handleRewrite(body, requestSignal) {
       return { status: 503, json: { error: "Rewrite requires OPENAI_API_KEY." } };
     }
 
-    const lang = normalizeTargetLanguage(body?.targetLanguage);
-    const style = normalizeStyle(body?.style);
+    lang = normalizeTargetLanguage(body?.targetLanguage);
+    style = normalizeStyle(body?.style);
     const dictionary = getRequestDictionary(body);
-    const correctedInput = applyDictionaryReplacements(applySelfCorrections(text), dictionary);
+    correctedInput = applyDictionaryReplacements(applySelfCorrections(text), dictionary);
     const explicitTargetLanguage = inferExplicitTargetLanguageFromInstruction(instruction);
-    const allowsLanguageChange = explicitTargetLanguage !== null || instructionRequestsLanguageChange(instruction);
-    const effectiveOutputLanguage = explicitTargetLanguage || lang;
+    allowsLanguageChange = explicitTargetLanguage !== null || instructionRequestsLanguageChange(instruction);
+    effectiveOutputLanguage = explicitTargetLanguage || lang;
 
     const langRule = explicitTargetLanguage
       ? `The instruction explicitly requests a language change. Output language must be ${explicitTargetLanguage}. Translate only because the instruction asks for it.`
@@ -2104,6 +2310,30 @@ async function handleRewrite(body, requestSignal) {
     if (requestSignal?.aborted) {
       return { status: 499, json: { error: "Client closed request." } };
     }
+
+    if (correctedInput && !allowsLanguageChange) {
+      const retryCount = Math.max(0, (Array.isArray(err?.attempts) ? err.attempts.length : timings.modelAttempts.length) - 1);
+      timings.totalMs = Date.now() - requestStartedAt;
+      console.warn("⚠️ rewrite fallback:", err?.message || "unknown", "| retries:", retryCount);
+      return {
+        status: 200,
+        json: {
+          language: effectiveOutputLanguage,
+          text: correctedInput,
+          appliedStyle: style,
+          instruction,
+          fallback: true,
+          timings: {
+            preprocessMs: timings.preprocessMs,
+            modelMs: timings.modelMs,
+            postprocessMs: timings.postprocessMs,
+            totalMs: timings.totalMs,
+            retries: retryCount
+          }
+        }
+      };
+    }
+
     if (Array.isArray(err?.attempts)) {
       const attempts = err.attempts;
       const retryCount = Math.max(0, attempts.length - 1);
@@ -2650,6 +2880,12 @@ const server = createServer(async (req, res) => {
           pro: RATE_LIMIT_MAX_AUTH_PRO,
           team: RATE_LIMIT_MAX_AUTH_TEAM,
           enterprise: RATE_LIMIT_MAX_AUTH_ENTERPRISE
+        },
+        dailyAuthByPlan: {
+          free: DAILY_USAGE_MAX_AUTH_FREE,
+          pro: DAILY_USAGE_MAX_AUTH_PRO,
+          team: DAILY_USAGE_MAX_AUTH_TEAM,
+          enterprise: DAILY_USAGE_MAX_AUTH_ENTERPRISE
         }
       },
       fastpathCache: {
@@ -2673,9 +2909,16 @@ const server = createServer(async (req, res) => {
       sendJson(req, res, auth.status, { error: auth.error });
       return;
     }
+    const currentUserUsage = auth.authenticated
+      ? peekDailyUsage(auth.tokenHash, auth.plan)
+      : null;
     sendJson(req, res, 200, {
       tag: BACKEND_TAG,
-      ...summarizePolishMetrics()
+      ...summarizePolishMetrics(),
+      dailyUsage: {
+        global: summarizeDailyUsage(),
+        currentUser: currentUserUsage
+      }
     });
     return;
   }
@@ -2743,6 +2986,35 @@ const server = createServer(async (req, res) => {
         plan: auth.plan
       });
       sendJson(req, res, parsed.status, { error: parsed.error }, {
+        "X-RateLimit-Limit": String(rate.limit),
+        "X-RateLimit-Remaining": String(rate.remaining),
+        "X-RateLimit-Reset": String(Math.floor(rate.resetAt / 1000)),
+        "X-Auth-Plan": normalizePlan(auth.plan)
+      });
+      return;
+    }
+
+    const dailyUsage = auth.authenticated
+      ? consumeDailyUsage(auth.tokenHash, auth.plan)
+      : null;
+    if (dailyUsage && !dailyUsage.allowed) {
+      recordPolishMetric({
+        status: 429,
+        endpointMs: Date.now() - endpointStartedAt,
+        cache: "MISS",
+        mode: "daily_capped",
+        auth: auth.authType,
+        plan: auth.plan
+      });
+      sendJson(req, res, 429, {
+        error: "Daily usage limit reached.",
+        dailyUsage: {
+          dayKey: dailyUsage.dayKey,
+          limit: dailyUsage.limit,
+          used: dailyUsage.used,
+          remaining: 0
+        }
+      }, {
         "X-RateLimit-Limit": String(rate.limit),
         "X-RateLimit-Remaining": String(rate.remaining),
         "X-RateLimit-Reset": String(Math.floor(rate.resetAt / 1000)),
@@ -2843,6 +3115,27 @@ const server = createServer(async (req, res) => {
     if (!parsed.ok) {
       if (requestAbortController.signal.aborted || res.writableEnded || res.destroyed) return;
       sendJson(req, res, parsed.status, { error: parsed.error }, {
+        "X-RateLimit-Limit": String(rate.limit),
+        "X-RateLimit-Remaining": String(rate.remaining),
+        "X-RateLimit-Reset": String(Math.floor(rate.resetAt / 1000)),
+        "X-Auth-Plan": normalizePlan(auth.plan)
+      });
+      return;
+    }
+
+    const dailyUsage = auth.authenticated
+      ? consumeDailyUsage(auth.tokenHash, auth.plan)
+      : null;
+    if (dailyUsage && !dailyUsage.allowed) {
+      sendJson(req, res, 429, {
+        error: "Daily usage limit reached.",
+        dailyUsage: {
+          dayKey: dailyUsage.dayKey,
+          limit: dailyUsage.limit,
+          used: dailyUsage.used,
+          remaining: 0
+        }
+      }, {
         "X-RateLimit-Limit": String(rate.limit),
         "X-RateLimit-Remaining": String(rate.remaining),
         "X-RateLimit-Reset": String(Math.floor(rate.resetAt / 1000)),

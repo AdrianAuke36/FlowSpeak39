@@ -50,6 +50,16 @@ struct SettingsView: View {
                                 stylePicker(selection: $settings.writingStyle, width: 220)
                             }
 
+                            settingRow(title: "Forståelse") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    interpretationLevelBar(selection: $settings.interpretationLevel)
+
+                                    Text(settings.interpretationLevel.description)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                }
+                            }
+
                             settingRow(title: "Default innsettingsmodus") {
                                 modePicker(selection: $settings.globalMode, width: 320)
                             }
@@ -141,6 +151,12 @@ struct SettingsView: View {
                                 HStack(spacing: 8) {
                                     Button("Sign out") {
                                         signOutSupabase()
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                    .disabled(supabaseAuthBusy)
+
+                                    Button("Switch account") {
+                                        switchAccountSupabase()
                                     }
                                     .buttonStyle(StoreSecondaryButtonStyle())
                                     .disabled(supabaseAuthBusy)
@@ -285,6 +301,45 @@ struct SettingsView: View {
         .storePicker(maxWidth: width)
     }
 
+    private func interpretationLevelBar(selection: Binding<InterpretationLevel>) -> some View {
+        HStack(spacing: 6) {
+            ForEach(InterpretationLevel.allCases) { level in
+                Button {
+                    selection.wrappedValue = level
+                } label: {
+                    Text(level.label)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(
+                            selection.wrappedValue == level
+                                ? Color.white
+                                : AppTheme.primaryText
+                        )
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(
+                                    selection.wrappedValue == level
+                                        ? AppTheme.accent
+                                        : AppTheme.surface
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: 520)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(AppTheme.surfaceMuted)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                )
+        )
+    }
+
     private func modePicker(selection: Binding<InsertionMode>, width: CGFloat = 320) -> some View {
         Picker("", selection: selection) {
             ForEach(InsertionMode.allCases) { mode in
@@ -346,34 +401,12 @@ struct SettingsView: View {
                         .storeField(maxWidth: 520)
                 }
 
-                settingRow(title: "Email") {
-                    TextField("you@example.com", text: $supabaseEmailInput)
-                        .textFieldStyle(.plain)
-                        .storeField(maxWidth: 520)
-                }
-
-                settingRow(title: "Password") {
-                    SecureField("Password", text: $supabasePasswordInput)
-                        .textFieldStyle(.plain)
-                        .storeField(maxWidth: 520)
-                }
-
-                HStack(spacing: 8) {
-                    Button("Sign in (Supabase JWT)") {
-                        signInSupabase()
-                    }
-                    .buttonStyle(StoreSecondaryButtonStyle())
-                    .disabled(supabaseAuthBusy)
-
-                    if !settings.hasSupabaseSession {
-                        Button("Create account") {
-                            signUpSupabase()
-                        }
-                        .buttonStyle(StoreSecondaryButtonStyle())
-                        .disabled(supabaseAuthBusy)
+                if settings.hasSupabaseSession {
+                    settingRow(title: "Current account") {
+                        readOnlyValue(settings.supabaseUserEmail.isEmpty ? "Unknown account" : settings.supabaseUserEmail)
                     }
 
-                    if settings.hasSupabaseSession {
+                    HStack(spacing: 8) {
                         Button("Refresh JWT") {
                             refreshSupabaseJWT()
                         }
@@ -382,6 +415,44 @@ struct SettingsView: View {
 
                         Button("Sign out") {
                             signOutSupabase()
+                        }
+                        .buttonStyle(StoreSecondaryButtonStyle())
+                        .disabled(supabaseAuthBusy)
+
+                        Button("Switch account") {
+                            switchAccountSupabase()
+                        }
+                        .buttonStyle(StoreSecondaryButtonStyle())
+                        .disabled(supabaseAuthBusy)
+                    }
+                } else {
+                    settingRow(title: "Email") {
+                        TextField("you@example.com", text: $supabaseEmailInput)
+                            .textFieldStyle(.plain)
+                            .storeField(maxWidth: 520)
+                    }
+
+                    settingRow(title: "Password") {
+                        SecureField("Password", text: $supabasePasswordInput)
+                            .textFieldStyle(.plain)
+                            .storeField(maxWidth: 520)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button("Sign in (Supabase JWT)") {
+                            signInSupabase()
+                        }
+                        .buttonStyle(StoreSecondaryButtonStyle())
+                        .disabled(supabaseAuthBusy)
+
+                        Button("Create account") {
+                            signUpSupabase()
+                        }
+                        .buttonStyle(StoreSecondaryButtonStyle())
+                        .disabled(supabaseAuthBusy)
+
+                        Button("Reset password") {
+                            requestSupabasePasswordReset()
                         }
                         .buttonStyle(StoreSecondaryButtonStyle())
                         .disabled(supabaseAuthBusy)
@@ -678,6 +749,30 @@ struct SettingsView: View {
         settings.signOutSupabaseSession()
         supabasePasswordInput = ""
         supabaseAuthStatus = "Signed out."
+    }
+
+    private func switchAccountSupabase() {
+        settings.signOutSupabaseSession(clearRememberedEmail: true)
+        supabaseEmailInput = ""
+        supabasePasswordInput = ""
+        supabaseAuthStatus = "Signed out. Enter another email to switch accounts."
+    }
+
+    private func requestSupabasePasswordReset() {
+        let email = supabaseEmailInput
+        supabaseAuthBusy = true
+        supabaseAuthStatus = "Sending reset email..."
+
+        Task {
+            defer { supabaseAuthBusy = false }
+
+            do {
+                try await settings.requestSupabasePasswordReset(email: email)
+                supabaseAuthStatus = "If the account exists, a password reset email has been sent."
+            } catch {
+                supabaseAuthStatus = error.localizedDescription
+            }
+        }
     }
 
     private func copyBackendToken() {

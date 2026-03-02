@@ -54,6 +54,7 @@ final class AIClient {
     // Default to Norwegian to prevent random language drift from model outputs.
     var targetLanguage: String = "nb-NO"
     var style: WritingStyle = .clean
+    var interpretationLevel: InterpretationLevel = .balanced
 
     private let session: URLSession
 
@@ -221,6 +222,7 @@ final class AIClient {
             "targetLanguage": targetLanguage,
             "targetLanguageForced": targetLanguageForced,
             "style": style.rawValue,
+            "interpretationLevel": interpretationLevel.rawValue,
             "mode": mode.rawValue,
             "bundleId": ctx?.bundleId ?? "",
             "appName": ctx?.appName ?? "",

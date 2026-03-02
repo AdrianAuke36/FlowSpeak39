@@ -100,6 +100,33 @@ enum WritingStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum InterpretationLevel: String, CaseIterable, Identifiable {
+    case literal
+    case balanced
+    case meaning
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .literal: return "Ordrett"
+        case .balanced: return "Balansert"
+        case .meaning: return "Mening"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .literal:
+            return "Gjentar det som ble sagt, så tett på ordene som mulig."
+        case .balanced:
+            return "Rydder lett opp, men holder seg nær det du sa."
+        case .meaning:
+            return "Skriver for best mulig mening og flyt uten å finne på noe nytt."
+        }
+    }
+}
+
 enum InsertionMode: String, CaseIterable, Identifiable {
     case pasteOnly
     case typeOnly
@@ -202,6 +229,7 @@ final class AppSettings: ObservableObject {
         static let translationTargetLanguage = "translationTargetLanguage"
         static let globalMode = "globalMode"
         static let writingStyle = "writingStyle"
+        static let interpretationLevel = "interpretationLevel"
         static let shortcutTriggerKey = "shortcutTriggerKey"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
         static let backendBaseURL = "backendBaseURL"
@@ -252,6 +280,10 @@ final class AppSettings: ObservableObject {
 
     @Published var writingStyle: WritingStyle {
         didSet { UserDefaults.standard.set(writingStyle.rawValue, forKey: StorageKey.writingStyle) }
+    }
+
+    @Published var interpretationLevel: InterpretationLevel {
+        didSet { UserDefaults.standard.set(interpretationLevel.rawValue, forKey: StorageKey.interpretationLevel) }
     }
 
     @Published var shortcutTriggerKey: ShortcutTriggerKey {
@@ -376,6 +408,9 @@ final class AppSettings: ObservableObject {
 
         let rawStyle = UserDefaults.standard.string(forKey: StorageKey.writingStyle) ?? WritingStyle.clean.rawValue
         self.writingStyle = WritingStyle(rawValue: rawStyle) ?? .clean
+
+        let rawInterpretationLevel = UserDefaults.standard.string(forKey: StorageKey.interpretationLevel) ?? InterpretationLevel.balanced.rawValue
+        self.interpretationLevel = InterpretationLevel(rawValue: rawInterpretationLevel) ?? .balanced
 
         let rawShortcutTrigger = UserDefaults.standard.string(forKey: StorageKey.shortcutTriggerKey) ?? ShortcutTriggerKey.function.rawValue
         self.shortcutTriggerKey = ShortcutTriggerKey(rawValue: rawShortcutTrigger) ?? .function
@@ -663,6 +698,23 @@ final class AppSettings: ObservableObject {
     }
 
     @MainActor
+    func signOutSupabaseSession(clearRememberedEmail: Bool) {
+        signOutSupabaseSession()
+        if clearRememberedEmail {
+            supabaseUserEmail = ""
+        }
+    }
+
+    @MainActor
+    func requestSupabasePasswordReset(email: String) async throws {
+        let cleanEmail = try validatedAuthEmail(email)
+        let _ = try await performSupabaseRequest(
+            path: "/auth/v1/recover",
+            payload: ["email": cleanEmail]
+        )
+    }
+
+    @MainActor
     func completeSetupOnboarding() {
         hasCompletedSetupOnboarding = true
     }
@@ -694,8 +746,7 @@ final class AppSettings: ObservableObject {
         )
     }
 
-    // Sign-in, sign-up and refresh all go through the same Supabase REST contract, only the path differs.
-    private func requestSupabaseAuth(path: String, payload: [String: Any]) async throws -> SupabaseAuthResponse {
+    private func performSupabaseRequest(path: String, payload: [String: Any]) async throws -> Data {
         let baseURL = Self.normalizedSupabaseProjectURL(supabaseProjectURL)
         let anonKey = supabaseAnonKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !baseURL.isEmpty else {
@@ -725,6 +776,13 @@ final class AppSettings: ObservableObject {
                 "Supabase auth failed (\(http.statusCode)). \(supabaseErrorMessage(from: data))"
             )
         }
+
+        return data
+    }
+
+    // Sign-in, sign-up and refresh all go through the same Supabase REST contract, only the path differs.
+    private func requestSupabaseAuth(path: String, payload: [String: Any]) async throws -> SupabaseAuthResponse {
+        let data = try await performSupabaseRequest(path: path, payload: payload)
         do {
             return try JSONDecoder().decode(SupabaseAuthResponse.self, from: data)
         } catch {
@@ -733,17 +791,22 @@ final class AppSettings: ObservableObject {
     }
 
     private func validatedAuthCredentials(email: String, password: String) throws -> (email: String, password: String) {
-        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanEmail = try validatedAuthEmail(email)
         let cleanPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !cleanEmail.isEmpty else {
-            throw AppSettingsError.auth("Missing email.")
-        }
         guard !cleanPassword.isEmpty else {
             throw AppSettingsError.auth("Missing password.")
         }
 
         return (email: cleanEmail, password: cleanPassword)
+    }
+
+    private func validatedAuthEmail(_ email: String) throws -> String {
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !cleanEmail.isEmpty else {
+            throw AppSettingsError.auth("Missing email.")
+        }
+        return cleanEmail
     }
 
     private func supabaseErrorMessage(from data: Data) -> String {

@@ -68,6 +68,7 @@ final class DictationController: NSObject {
     private var prefetchedContext: FieldContext?
     private var speechLocaleIdentifier: String = SpeechConfig.fallbackLocale
     private var oneShotOutputLanguageOverride: String?
+    private var interpretationLevel: InterpretationLevel = .balanced
 
     private struct SpeculativeDraft {
         let text: String
@@ -102,6 +103,12 @@ final class DictationController: NSObject {
     func setStyle(_ style: WritingStyle) {
         ai.style = style
         print("✍️ style:", style.menuLabel)
+    }
+
+    func setInterpretationLevel(_ interpretationLevel: InterpretationLevel) {
+        self.interpretationLevel = interpretationLevel
+        ai.interpretationLevel = interpretationLevel
+        print("🧠 dictation:", interpretationLevel.label)
     }
 
     func start() {
@@ -528,7 +535,10 @@ final class DictationController: NSObject {
     }
 
     private func localPolish(text: String, mode: DraftMode) -> String {
-        let corrected = applyingLocalSelfCorrections(text)
+        let corrected = applyingLocalSelfCorrections(text, interpretationLevel: interpretationLevel)
+        if interpretationLevel == .literal {
+            return corrected
+        }
         switch mode {
         case .emailSubject:
             return corrected.replacingOccurrences(of: #"[.!?]+$"#, with: "", options: .regularExpression)
@@ -539,18 +549,23 @@ final class DictationController: NSObject {
         }
     }
 
-    private func applyingLocalSelfCorrections(_ text: String) -> String {
+    private func applyingLocalSelfCorrections(
+        _ text: String,
+        interpretationLevel: InterpretationLevel
+    ) -> String {
         var out = text.replacingOccurrences(of: "\r\n", with: "\n")
         if out.isEmpty { return out }
 
-        for _ in 0..<3 {
-            let previous = out
-            out = replacingMatches(in: out, using: LocalPolishRegex.inlineTimeCorrection, with: "$2")
-            out = replacingMatches(in: out, using: LocalPolishRegex.inlineHourCorrection, with: "$2")
-            out = replacingMatches(in: out, using: LocalPolishRegex.inlineAmountCorrection, with: "$2")
-            if out == previous { break }
+        if interpretationLevel != .literal {
+            for _ in 0..<3 {
+                let previous = out
+                out = replacingMatches(in: out, using: LocalPolishRegex.inlineTimeCorrection, with: "$2")
+                out = replacingMatches(in: out, using: LocalPolishRegex.inlineHourCorrection, with: "$2")
+                out = replacingMatches(in: out, using: LocalPolishRegex.inlineAmountCorrection, with: "$2")
+                if out == previous { break }
+            }
+            out = replacingMatches(in: out, using: LocalPolishRegex.fillerWords, with: "$1")
         }
-        out = replacingMatches(in: out, using: LocalPolishRegex.fillerWords, with: "$1")
         out = replacingMatches(in: out, using: EmailBodyRegex.spaceBeforePunctuation, with: "$1")
         out = replacingMatches(in: out, using: EmailBodyRegex.trailingWhitespace, with: "")
         out = replacingMatches(in: out, using: EmailBodyRegex.extraNewlines, with: "\n\n")
