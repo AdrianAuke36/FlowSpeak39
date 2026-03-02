@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 
 struct SettingsView: View {
@@ -13,6 +14,10 @@ struct SettingsView: View {
     @ObservedObject private var history = DictationHistory.shared
 
     @State private var showsAdvancedAuthSettings: Bool = false
+    @State private var showsShortcutSettings: Bool = false
+    @State private var isCapturingShortcut: Bool = false
+    @State private var shortcutCaptureStatus: String = "Press a supported key."
+    @State private var shortcutCaptureMonitor: Any?
     @State private var microphones: [MicrophoneOption] = MicrophoneCatalog.availableOptions()
     @State private var supabaseEmailInput: String = ""
     @State private var supabasePasswordInput: String = ""
@@ -27,7 +32,7 @@ struct SettingsView: View {
                         .font(.system(size: 28, weight: .bold, design: .serif))
                         .foregroundStyle(AppTheme.primaryText)
 
-                    Text("Hold `fn` for å starte diktering. Slipp `fn` for å sette inn teksten. Hold `fn+Shift` for oversettelse i én diktering. Marker tekst, hold `fn+Control` mens du sier rewrite-instruksjonen, og slipp `fn` for å kjøre.")
+                    Text(settings.shortcutInstructionText)
                         .font(.system(size: 13))
                         .foregroundStyle(AppTheme.secondaryText)
 
@@ -61,6 +66,37 @@ struct SettingsView: View {
                                     .buttonStyle(StoreSecondaryButtonStyle())
                                     .help("Oppdater mikrofonliste")
                                 }
+                            }
+
+                            settingRow(title: "Shortcuts") {
+                                HStack(alignment: .center, spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(settings.shortcutTriggerKey.summary)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(AppTheme.primaryText)
+
+                                        Text("Velg hovedtasten for dictate, translate og rewrite.")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(AppTheme.secondaryText)
+                                    }
+
+                                    Spacer()
+
+                                    Button("Change") {
+                                        showsAdvancedAuthSettings = false
+                                        showsShortcutSettings = true
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                }
+                                .padding(12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(AppTheme.surface)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                                        )
+                                )
                             }
 
                             settingRow(title: "Backend URL") {
@@ -110,6 +146,8 @@ struct SettingsView: View {
                                     .disabled(supabaseAuthBusy)
 
                                     Button("Advanced auth settings") {
+                                        stopShortcutCapture()
+                                        showsShortcutSettings = false
                                         showsAdvancedAuthSettings = true
                                     }
                                     .buttonStyle(StoreSecondaryButtonStyle())
@@ -120,6 +158,8 @@ struct SettingsView: View {
                                     .foregroundStyle(AppTheme.secondaryText)
 
                                 Button("Advanced auth settings") {
+                                    stopShortcutCapture()
+                                    showsShortcutSettings = false
                                     showsAdvancedAuthSettings = true
                                 }
                                 .buttonStyle(StoreSecondaryButtonStyle())
@@ -182,27 +222,37 @@ struct SettingsView: View {
                 .padding(18)
             }
             .background(AppTheme.canvas)
-            .disabled(showsAdvancedAuthSettings)
-            .blur(radius: showsAdvancedAuthSettings ? 1.5 : 0)
+            .disabled(showsModalOverlay)
+            .blur(radius: showsModalOverlay ? 1.5 : 0)
 
-            if showsAdvancedAuthSettings {
+            if showsModalOverlay {
                 Color.black.opacity(0.14)
                     .ignoresSafeArea()
                     .onTapGesture {
+                        stopShortcutCapture()
                         showsAdvancedAuthSettings = false
+                        showsShortcutSettings = false
                     }
 
-                advancedAuthOverlay
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                if showsAdvancedAuthSettings {
+                    advancedAuthOverlay
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                } else if showsShortcutSettings {
+                    shortcutSettingsOverlay
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                }
             }
         }
         .background(AppTheme.canvas)
-        .animation(.easeOut(duration: 0.16), value: showsAdvancedAuthSettings)
+        .animation(.easeOut(duration: 0.16), value: showsModalOverlay)
         .onAppear {
             refreshMicrophones()
             if supabaseEmailInput.isEmpty {
                 supabaseEmailInput = settings.supabaseUserEmail
             }
+        }
+        .onDisappear {
+            stopShortcutCapture()
         }
     }
 
@@ -220,7 +270,7 @@ struct SettingsView: View {
     private func languagePicker(selection: Binding<AppLanguage>, width: CGFloat) -> some View {
         Picker("", selection: selection) {
             ForEach(AppLanguage.allCases) { language in
-                Text(language.menuLabel).tag(language)
+                Text(language.pickerMenuLabel).tag(language)
             }
         }
         .storePicker(maxWidth: width)
@@ -267,6 +317,10 @@ struct SettingsView: View {
                             .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
                     )
             )
+    }
+
+    private var showsModalOverlay: Bool {
+        showsAdvancedAuthSettings || showsShortcutSettings
     }
 
     private var advancedAuthOverlay: some View {
@@ -355,6 +409,202 @@ struct SettingsView: View {
         }
     }
 
+    private var shortcutSettingsOverlay: some View {
+        ZStack {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Shortcuts")
+                            .font(.system(size: 24, weight: .bold, design: .serif))
+                            .foregroundStyle(AppTheme.primaryText)
+
+                        Text("Velg hovedtasten. Translate bruker + Shift, og rewrite bruker + Control.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        stopShortcutCapture()
+                        showsShortcutSettings = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(AppTheme.secondaryText)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    shortcutPreviewRow(title: "Dictate", shortcut: settings.shortcutTriggerKey.dictateShortcut)
+                    shortcutPreviewRow(title: "Translate", shortcut: settings.shortcutTriggerKey.translateShortcut)
+                    shortcutPreviewRow(title: "Rewrite", shortcut: settings.shortcutTriggerKey.rewriteShortcut)
+                }
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(AppTheme.surfaceMuted)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                        )
+                )
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Trykk en tast nå")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(AppTheme.primaryText)
+
+                        Text(isCapturingShortcut ? shortcutCaptureStatus : "FlowSpeak lytter etter en støttet tast.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+
+                    Spacer()
+
+                    Button(isCapturingShortcut ? "Listening…" : "Rebind") {
+                        startShortcutCapture()
+                    }
+                    .buttonStyle(StoreSecondaryButtonStyle())
+                    .disabled(isCapturingShortcut)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(AppTheme.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                        )
+                )
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Presets")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AppTheme.primaryText)
+
+                    ForEach(ShortcutTriggerKey.allCases) { option in
+                        Button {
+                            settings.shortcutTriggerKey = option
+                        } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(option.label)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(AppTheme.primaryText)
+
+                                    Text(option.summary)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: settings.shortcutTriggerKey == option ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(settings.shortcutTriggerKey == option ? AppTheme.accent : AppTheme.fieldBorder)
+                            }
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(AppTheme.surface)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .strokeBorder(
+                                                settings.shortcutTriggerKey == option ? AppTheme.accent : AppTheme.fieldBorder,
+                                                lineWidth: 1
+                                            )
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                HStack {
+                    Spacer()
+
+                    Button("Done") {
+                        stopShortcutCapture()
+                        showsShortcutSettings = false
+                    }
+                    .buttonStyle(StoreSecondaryButtonStyle())
+                }
+            }
+            .allowsHitTesting(!isCapturingShortcut)
+
+            if isCapturingShortcut {
+                Color.black.opacity(0.12)
+                    .ignoresSafeArea()
+
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Press a key now")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(AppTheme.primaryText)
+
+                    Text("Trykk Fn, Left Option, Right Option, Left Command eller Right Command.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(AppTheme.secondaryText)
+
+                    Text(shortcutCaptureStatus)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppTheme.primaryText)
+
+                    HStack {
+                        Spacer()
+
+                        Button("Cancel") {
+                            stopShortcutCapture()
+                        }
+                        .buttonStyle(StoreSecondaryButtonStyle())
+                    }
+                }
+                .padding(18)
+                .frame(width: 380)
+                .background(
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(AppTheme.canvas)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.18), radius: 22, y: 8)
+            }
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 22)
+                .fill(AppTheme.canvas)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22)
+                        .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                )
+        )
+        .frame(width: 560)
+        .shadow(color: .black.opacity(0.18), radius: 24, y: 10)
+        .onTapGesture {
+            // Prevent clicks inside the card from dismissing the overlay.
+        }
+    }
+
+    private func shortcutPreviewRow(title: String, shortcut: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AppTheme.primaryText)
+
+            Spacer()
+
+            Text(shortcut)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+    }
+
     private func refreshMicrophones() {
         microphones = MicrophoneCatalog.availableOptions()
         let validIDs = Set(microphones.map(\.id))
@@ -437,6 +687,50 @@ struct SettingsView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(token, forType: .string)
+    }
+
+    private func startShortcutCapture() {
+        stopShortcutCapture()
+        settings.isShortcutCaptureActive = true
+        isCapturingShortcut = true
+        shortcutCaptureStatus = "Waiting for key…"
+
+        shortcutCaptureMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            if let key = shortcutKey(from: event) {
+                settings.shortcutTriggerKey = key
+                shortcutCaptureStatus = "Set to \(key.label)."
+                stopShortcutCapture()
+            }
+            return event
+        }
+    }
+
+    private func stopShortcutCapture() {
+        settings.isShortcutCaptureActive = false
+        if let monitor = shortcutCaptureMonitor {
+            NSEvent.removeMonitor(monitor)
+            shortcutCaptureMonitor = nil
+        }
+        isCapturingShortcut = false
+    }
+
+    private func shortcutKey(from event: NSEvent) -> ShortcutTriggerKey? {
+        guard event.type == .flagsChanged else { return nil }
+
+        switch event.keyCode {
+        case UInt16(kVK_Function):
+            return .function
+        case UInt16(kVK_Option):
+            return .leftOption
+        case UInt16(kVK_RightOption):
+            return .rightOption
+        case UInt16(kVK_Command):
+            return .leftCommand
+        case UInt16(kVK_RightCommand):
+            return .rightCommand
+        default:
+            return nil
+        }
     }
 
     private func performSupabaseAuth(

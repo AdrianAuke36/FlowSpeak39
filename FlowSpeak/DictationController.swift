@@ -58,6 +58,7 @@ final class DictationController: NSObject {
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
     var onInserted: (() -> Void)?
+    var onCaptureInterrupted: ((String?) -> Void)?
 
     private let settings = AppSettings.shared
 
@@ -889,6 +890,7 @@ final class DictationController: NSObject {
         let recognizer = SFSpeechRecognizer(locale: locale)
             ?? SFSpeechRecognizer(locale: Locale(identifier: SpeechConfig.fallbackLocale))
         guard let recognizer, recognizer.isAvailable else {
+            reportCaptureInterruption("Speech recognition is temporarily unavailable.")
             cancelPendingStart()
             return
         }
@@ -919,6 +921,7 @@ final class DictationController: NSObject {
         do {
             try audioEngine.start()
         } catch {
+            reportCaptureInterruption("Failed to start microphone: \(error.localizedDescription)")
             stopInternal()
             return
         }
@@ -940,7 +943,12 @@ final class DictationController: NSObject {
 
             if error != nil {
                 DispatchQueue.main.async {
+                    let shouldNotify = self.isRecording || self.isStarting
                     self.stopInternal()
+                    self.resetSpeculativeState(cancel: true)
+                    if shouldNotify {
+                        self.onCaptureInterrupted?(error?.localizedDescription)
+                    }
                 }
             }
         }
@@ -1082,6 +1090,12 @@ final class DictationController: NSObject {
 
     private func cancelPendingStart() {
         stopInternal()
+    }
+
+    private func reportCaptureInterruption(_ message: String?) {
+        DispatchQueue.main.async {
+            self.onCaptureInterrupted?(message)
+        }
     }
 
     // MARK: - Basic polish

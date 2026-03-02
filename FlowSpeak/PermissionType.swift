@@ -1,8 +1,12 @@
 import AppKit
 import ApplicationServices
+import AVFoundation
+import Speech
 import SwiftUI
 
 enum PermissionType {
+    case speechRecognition
+    case microphone
     case accessibility
     case inputMonitoring
 
@@ -12,6 +16,18 @@ enum PermissionType {
 
     private var details: Details {
         switch self {
+        case .speechRecognition:
+            return Details(
+                title: "Speech Recognition Permission Required",
+                message: "FlowSpeak needs speech recognition access to turn your voice into text. Enable it in System Settings, then try again.",
+                settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!
+            )
+        case .microphone:
+            return Details(
+                title: "Microphone Permission Required",
+                message: "FlowSpeak needs microphone access to record when you hold fn. Enable it in System Settings, then try again.",
+                settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+            )
         case .accessibility:
             return Details(
                 title: "Accessibility Permission Required",
@@ -44,11 +60,22 @@ final class PermissionController {
 
     private var window: NSWindow?
 
-    func checkAndPromptIfNeeded() {
-        guard let missingPermission = firstMissingPermission() else { return }
+    @discardableResult
+    func checkAndPromptIfNeededForFnPress() -> Bool {
+        guard let missingPermission = firstBlockingPermissionForFnPress() else { return false }
         DispatchQueue.main.async { [weak self] in
             self?.show(type: missingPermission)
         }
+        return true
+    }
+
+    @discardableResult
+    func checkAndPromptIfNeededForRewrite() -> Bool {
+        guard !AXIsProcessTrusted() else { return false }
+        DispatchQueue.main.async { [weak self] in
+            self?.show(type: .accessibility)
+        }
+        return true
     }
 
     func show(type: PermissionType) {
@@ -81,7 +108,21 @@ final class PermissionController {
         window = permissionWindow
     }
 
-    private func firstMissingPermission() -> PermissionType? {
+    private func firstBlockingPermissionForFnPress() -> PermissionType? {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .denied, .restricted:
+            return .speechRecognition
+        default:
+            break
+        }
+
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .denied, .restricted:
+            return .microphone
+        default:
+            break
+        }
+
         if !AXIsProcessTrusted() { return .accessibility }
         if !CGPreflightListenEventAccess() { return .inputMonitoring }
         return nil
@@ -92,7 +133,26 @@ final class PermissionController {
         dismiss()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + Constants.recheckDelay) { [weak self] in
-            self?.checkAndPromptIfNeeded()
+            switch type {
+            case .accessibility:
+                if !AXIsProcessTrusted() {
+                    self?.show(type: .accessibility)
+                }
+            case .inputMonitoring:
+                if !CGPreflightListenEventAccess() {
+                    self?.show(type: .inputMonitoring)
+                }
+            case .speechRecognition:
+                let status = SFSpeechRecognizer.authorizationStatus()
+                if status == .denied || status == .restricted {
+                    self?.show(type: .speechRecognition)
+                }
+            case .microphone:
+                let status = AVCaptureDevice.authorizationStatus(for: .audio)
+                if status == .denied || status == .restricted {
+                    self?.show(type: .microphone)
+                }
+            }
         }
     }
 

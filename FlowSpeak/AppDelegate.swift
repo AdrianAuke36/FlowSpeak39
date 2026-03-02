@@ -29,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let overlay = OverlayController()
     private let settings = AppSettings.shared
     private var cancellables = Set<AnyCancellable>()
+    private var globalFlagsMonitor: Any?
+    private var localFlagsMonitor: Any?
 
     private var backendStatusItem: NSMenuItem?
     private var aiMenuItem: NSMenuItem?
@@ -47,6 +49,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shiftIsDown: Bool = false
     private var controlIsDown: Bool = false
     private var functionModifierIsDown: Bool = false
+    private var leftOptionModifierIsDown: Bool = false
+    private var rightOptionModifierIsDown: Bool = false
+    private var leftCommandModifierIsDown: Bool = false
+    private var rightCommandModifierIsDown: Bool = false
     private var didSetTranslationOverrideInCurrentFnHold: Bool = false
     private var pendingFnStartWorkItem: DispatchWorkItem?
     private var pendingFnReleaseWorkItem: DispatchWorkItem?
@@ -104,6 +110,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         cancelPendingFnStart()
         cancelPendingFnReleaseAction()
+        if let globalFlagsMonitor {
+            NSEvent.removeMonitor(globalFlagsMonitor)
+            self.globalFlagsMonitor = nil
+        }
+        if let localFlagsMonitor {
+            NSEvent.removeMonitor(localFlagsMonitor)
+            self.localFlagsMonitor = nil
+        }
     }
 
     private func observeSettingsChanges() {
@@ -168,6 +182,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.overlay.hide()
             }
         }
+
+        dictation.onCaptureInterrupted = { [weak self] message in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.resetCaptureInteractionState()
+                self.overlay.hide()
+                self.updateStatusIcon(isRecording: false)
+                if let message, !message.isEmpty {
+                    print("⚠️ capture interrupted:", message)
+                }
+            }
+        }
     }
 
     private func runWhenCaptureIdle(_ action: @escaping () -> Void) {
@@ -182,18 +208,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - fn-tast via NSEvent local+global monitor
 
     private func setupFnKeyTap() {
-        NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleFlagsChangedEvent(event)
         }
-        NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleFlagsChangedEvent(event)
             return event
         }
     }
 
     private func handleFlagsChangedEvent(_ event: NSEvent) {
+        if settings.isShortcutCaptureActive {
+            return
+        }
         updateModifierState(from: event)
-        let fnDown = functionModifierIsDown
+        processModifierStateSnapshot()
+    }
+
+    private func processModifierStateSnapshot() {
+        let fnDown = selectedTriggerIsDown
         let shiftDown = shiftIsDown
         let controlDown = controlIsDown
 
@@ -219,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let targetLanguage = settings.translationTargetLanguage.targetLanguageCode
             dictation.setOneShotOutputLanguageOverride(targetLanguage)
             didSetTranslationOverrideInCurrentFnHold = true
-            print("🌍 one-shot translation: \(targetLanguage) (\(settings.translationTargetLanguage.menuLabel), fn+Shift)")
+            print("🌍 one-shot translation: \(targetLanguage) (\(settings.translationTargetLanguage.menuLabel), \(settings.shortcutTriggerKey.translateShortcut))")
         }
 
         if fnDown && !fnIsDown {
@@ -300,17 +333,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingFnReleaseWorkItem = nil
     }
 
+    private func resetCaptureInteractionState() {
+        fnIsDown = false
+        shiftIsDown = false
+        controlIsDown = false
+        functionModifierIsDown = false
+        leftOptionModifierIsDown = false
+        rightOptionModifierIsDown = false
+        leftCommandModifierIsDown = false
+        rightCommandModifierIsDown = false
+        didSetTranslationOverrideInCurrentFnHold = false
+        didConsumeFnHoldForRewriteCombo = false
+        isPersistentCaptureLocked = false
+        isSelectionRewriteInProgress = false
+        isCapturingRewriteInstruction = false
+        pendingRewriteTargetApp = nil
+        cancelPendingFnStart()
+        cancelPendingFnReleaseAction()
+        overlay.setLocked(false)
+    }
+
     private func updateModifierState(from event: NSEvent) {
         let flags = event.modifierFlags
-        // Always derive full modifier state from event flags. Relying on changed key
-        // alone makes fn detection flaky across keyboards and after repeated holds.
-        functionModifierIsDown = flags.contains(.function)
         shiftIsDown = flags.contains(.shift)
         controlIsDown = flags.contains(.control)
+
+        // Built-in keyboards usually set .function correctly. Some external keyboards
+        // still send the fn/globe key as a flagsChanged event (keyCode 63) but do not
+        // include the .function flag. For those keyboards, treat repeated function-key
+        // flagsChanged events as a press/release toggle.
+        if event.type == .flagsChanged && event.keyCode == UInt16(kVK_Function) {
+            if flags.contains(.function) {
+                functionModifierIsDown = true
+            } else {
+                functionModifierIsDown.toggle()
+            }
+        } else if event.type == .flagsChanged && event.keyCode == UInt16(kVK_Option) {
+            leftOptionModifierIsDown.toggle()
+        } else if event.type == .flagsChanged && event.keyCode == UInt16(kVK_RightOption) {
+            rightOptionModifierIsDown.toggle()
+        } else if event.type == .flagsChanged && event.keyCode == UInt16(kVK_Command) {
+            leftCommandModifierIsDown.toggle()
+        } else if event.type == .flagsChanged && event.keyCode == UInt16(kVK_RightCommand) {
+            rightCommandModifierIsDown.toggle()
+        }
+
+        if flags.contains(.function) {
+            functionModifierIsDown = true
+        } else if !fnIsDown && !dictation.isCaptureActive && !isPersistentCaptureLocked && !isSelectionRewriteInProgress {
+            functionModifierIsDown = false
+        }
+
+        if !flags.contains(.option) {
+            leftOptionModifierIsDown = false
+            rightOptionModifierIsDown = false
+        }
+
+        if !flags.contains(.command) {
+            leftCommandModifierIsDown = false
+            rightCommandModifierIsDown = false
+        }
+    }
+
+    private var selectedTriggerIsDown: Bool {
+        switch settings.shortcutTriggerKey {
+        case .function:
+            return functionModifierIsDown
+        case .leftOption:
+            return leftOptionModifierIsDown
+        case .rightOption:
+            return rightOptionModifierIsDown
+        case .leftCommand:
+            return leftCommandModifierIsDown
+        case .rightCommand:
+            return rightCommandModifierIsDown
+        }
     }
 
     private func handleFnPressed() {
         guard !dictation.isCaptureActive else { return }
+        if PermissionController.shared.checkAndPromptIfNeededForFnPress() {
+            isPersistentCaptureLocked = false
+            overlay.setLocked(false)
+            overlay.hide()
+            updateStatusIcon(isRecording: false)
+            return
+        }
         isPersistentCaptureLocked = false
         overlay.setLocked(false)
         dictation.prefetchContext()
@@ -336,8 +444,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func beginRewriteFromVoiceInstruction() {
         guard !isSelectionRewriteInProgress else { return }
         guard !dictation.isCaptureActive else { return }
-        guard AXIsProcessTrusted() else {
-            presentRewriteError("Accessibility permission is required to rewrite selected text.")
+        guard !PermissionController.shared.checkAndPromptIfNeededForRewrite() else {
             return
         }
 
@@ -500,17 +607,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func presentRewriteError(_ message: String) {
         print("❌ rewrite:", message)
         if message.localizedCaseInsensitiveContains("Accessibility permission") {
-            openAccessibilitySettings()
+            PermissionController.shared.show(type: .accessibility)
         } else {
             NSSound.beep()
         }
-    }
-
-    private func openAccessibilitySettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
-            return
-        }
-        NSWorkspace.shared.open(url)
     }
 
     private func capturePasteboardSnapshot() -> PasteboardSnapshot {
@@ -675,7 +775,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         languageMenuItems.removeAll()
 
         for language in AppLanguage.allCases {
-            let item = makeMenuItem(title: language.menuLabel, action: #selector(selectLanguage(_:)))
+            let item = makeMenuItem(title: language.pickerMenuLabel, action: #selector(selectLanguage(_:)))
             item.representedObject = language.rawValue
             languageMenu.addItem(item)
             languageMenuItems[language] = item
@@ -707,7 +807,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         translationMenuItems.removeAll()
 
         for language in AppLanguage.allCases {
-            let item = makeMenuItem(title: language.menuLabel, action: #selector(selectTranslationTarget(_:)))
+            let item = makeMenuItem(title: language.pickerMenuLabel, action: #selector(selectTranslationTarget(_:)))
             item.representedObject = language.rawValue
             translationMenu.addItem(item)
             translationMenuItems[language] = item

@@ -13,20 +13,67 @@ import Security
 enum AppLanguage: String, CaseIterable, Identifiable {
     case norwegian = "nb-NO"
     case english = "en-US"
+    case spanish = "es-ES"
+    case french = "fr-FR"
+    case german = "de-DE"
+    case portuguese = "pt-PT"
+    case italian = "it-IT"
+    case dutch = "nl-NL"
+    case polish = "pl-PL"
+    case arabic = "ar-SA"
+    case ukrainian = "uk-UA"
 
     var id: String { rawValue }
+
+    var flagEmoji: String {
+        switch self {
+        case .norwegian: return "🇳🇴"
+        case .english: return "🇺🇸"
+        case .spanish: return "🇪🇸"
+        case .french: return "🇫🇷"
+        case .german: return "🇩🇪"
+        case .portuguese: return "🇵🇹"
+        case .italian: return "🇮🇹"
+        case .dutch: return "🇳🇱"
+        case .polish: return "🇵🇱"
+        case .arabic: return "🇸🇦"
+        case .ukrainian: return "🇺🇦"
+        }
+    }
 
     var menuLabel: String {
         switch self {
         case .norwegian: return "Norsk"
-        case .english:   return "English"
+        case .english: return "English"
+        case .spanish: return "Español"
+        case .french: return "Français"
+        case .german: return "Deutsch"
+        case .portuguese: return "Português"
+        case .italian: return "Italiano"
+        case .dutch: return "Nederlands"
+        case .polish: return "Polski"
+        case .arabic: return "العربية"
+        case .ukrainian: return "Українська"
         }
+    }
+
+    var pickerMenuLabel: String {
+        "\(flagEmoji) \(menuLabel)"
     }
 
     var speechLocaleIdentifier: String {
         switch self {
         case .norwegian: return "nb-NO"
-        case .english:   return "en-US"
+        case .english: return "en-US"
+        case .spanish: return "es-ES"
+        case .french: return "fr-FR"
+        case .german: return "de-DE"
+        case .portuguese: return "pt-PT"
+        case .italian: return "it-IT"
+        case .dutch: return "nl-NL"
+        case .polish: return "pl-PL"
+        case .arabic: return "ar-SA"
+        case .ukrainian: return "uk-UA"
         }
     }
 
@@ -66,6 +113,52 @@ enum InsertionMode: String, CaseIterable, Identifiable {
         case .typeOnly:  return "Type (compat)"
         case .hybrid:    return "Hybrid (paste → fallback type)"
         }
+    }
+}
+
+enum ShortcutTriggerKey: String, CaseIterable, Identifiable {
+    case function
+    case leftOption
+    case rightOption
+    case leftCommand
+    case rightCommand
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .function: return "Fn"
+        case .leftOption: return "Left Option"
+        case .rightOption: return "Right Option"
+        case .leftCommand: return "Left Command"
+        case .rightCommand: return "Right Command"
+        }
+    }
+
+    var compactLabel: String {
+        switch self {
+        case .function: return "Fn"
+        case .leftOption: return "L Opt"
+        case .rightOption: return "R Opt"
+        case .leftCommand: return "L Cmd"
+        case .rightCommand: return "R Cmd"
+        }
+    }
+
+    var dictateShortcut: String {
+        label
+    }
+
+    var translateShortcut: String {
+        "\(label) + Shift"
+    }
+
+    var rewriteShortcut: String {
+        "\(label) + Control"
+    }
+
+    var summary: String {
+        "\(dictateShortcut) · \(translateShortcut) · \(rewriteShortcut)"
     }
 }
 
@@ -109,12 +202,14 @@ final class AppSettings: ObservableObject {
         static let translationTargetLanguage = "translationTargetLanguage"
         static let globalMode = "globalMode"
         static let writingStyle = "writingStyle"
+        static let shortcutTriggerKey = "shortcutTriggerKey"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
         static let backendBaseURL = "backendBaseURL"
         static let backendToken = "backendToken"
         static let supabaseProjectURL = "supabaseProjectURL"
         static let supabaseAnonKey = "supabaseAnonKey"
         static let supabaseUserEmail = "supabaseUserEmail"
+        static let supabaseUserDisplayName = "supabaseUserDisplayName"
         static let supabaseSessionExpiresAt = "supabaseSessionExpiresAt"
         static let supabaseRefreshToken = "supabaseRefreshToken"
         static let hasCompletedSetupOnboarding = "hasCompletedSetupOnboarding"
@@ -154,6 +249,10 @@ final class AppSettings: ObservableObject {
 
     @Published var writingStyle: WritingStyle {
         didSet { UserDefaults.standard.set(writingStyle.rawValue, forKey: StorageKey.writingStyle) }
+    }
+
+    @Published var shortcutTriggerKey: ShortcutTriggerKey {
+        didSet { UserDefaults.standard.set(shortcutTriggerKey.rawValue, forKey: StorageKey.shortcutTriggerKey) }
     }
 
     @Published var selectedMicrophoneUID: String {
@@ -223,6 +322,21 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var supabaseUserDisplayName: String {
+        didSet {
+            let normalized = supabaseUserDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if supabaseUserDisplayName != normalized {
+                supabaseUserDisplayName = normalized
+                return
+            }
+            if normalized.isEmpty {
+                UserDefaults.standard.removeObject(forKey: StorageKey.supabaseUserDisplayName)
+            } else {
+                UserDefaults.standard.set(normalized, forKey: StorageKey.supabaseUserDisplayName)
+            }
+        }
+    }
+
     @Published var supabaseSessionExpiresAt: Date? {
         didSet {
             if let expiry = supabaseSessionExpiresAt {
@@ -236,6 +350,8 @@ final class AppSettings: ObservableObject {
     @Published var hasCompletedSetupOnboarding: Bool {
         didSet { UserDefaults.standard.set(hasCompletedSetupOnboarding, forKey: StorageKey.hasCompletedSetupOnboarding) }
     }
+
+    @Published var isShortcutCaptureActive: Bool = false
 
     // bundleId -> modeRawValue
     @Published var overrides: [String: String] {
@@ -257,6 +373,9 @@ final class AppSettings: ObservableObject {
 
         let rawStyle = UserDefaults.standard.string(forKey: StorageKey.writingStyle) ?? WritingStyle.clean.rawValue
         self.writingStyle = WritingStyle(rawValue: rawStyle) ?? .clean
+
+        let rawShortcutTrigger = UserDefaults.standard.string(forKey: StorageKey.shortcutTriggerKey) ?? ShortcutTriggerKey.function.rawValue
+        self.shortcutTriggerKey = ShortcutTriggerKey(rawValue: rawShortcutTrigger) ?? .function
 
         let rawMicrophone = UserDefaults.standard.string(forKey: StorageKey.selectedMicrophoneUID) ?? MicrophoneOption.systemDefaultID
         self.selectedMicrophoneUID = rawMicrophone
@@ -289,6 +408,7 @@ final class AppSettings: ObservableObject {
         }
 
         self.supabaseUserEmail = UserDefaults.standard.string(forKey: StorageKey.supabaseUserEmail) ?? ""
+        self.supabaseUserDisplayName = UserDefaults.standard.string(forKey: StorageKey.supabaseUserDisplayName) ?? ""
         if let rawExpiry = UserDefaults.standard.object(forKey: StorageKey.supabaseSessionExpiresAt) as? Double {
             self.supabaseSessionExpiresAt = Date(timeIntervalSince1970: rawExpiry)
         } else {
@@ -411,6 +531,37 @@ final class AppSettings: ObservableObject {
         !supabaseAnonKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var greetingDisplayName: String {
+        let explicitName = supabaseUserDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicitName.isEmpty {
+            return explicitName
+        }
+
+        let cleanEmail = supabaseUserEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanEmail.isEmpty else { return "" }
+
+        let localPart = cleanEmail.split(separator: "@", maxSplits: 1).first.map(String.init) ?? cleanEmail
+        let spaced = localPart
+            .replacingOccurrences(of: ".", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !spaced.isEmpty else { return "" }
+        return spaced
+            .split(separator: " ")
+            .map { word in
+                guard let first = word.first else { return "" }
+                return String(first).uppercased() + word.dropFirst()
+            }
+            .joined(separator: " ")
+    }
+
+    var shortcutInstructionText: String {
+        let trigger = shortcutTriggerKey.label
+        return "Hold \(trigger) for å starte diktering. Slipp \(trigger) for å sette inn teksten. Hold \(trigger) + Shift for oversettelse i én diktering. Marker tekst, hold \(trigger) + Control mens du sier rewrite-instruksjonen, og slipp \(trigger) for å kjøre."
+    }
+
     @MainActor
     func signInSupabase(email: String, password: String) async throws {
         let credentials = try validatedAuthCredentials(email: email, password: password)
@@ -423,6 +574,9 @@ final class AppSettings: ObservableObject {
             throw AppSettingsError.auth("Supabase did not return a usable session.")
         }
         supabaseUserEmail = credentials.email
+        if let displayName = response.user?.displayName {
+            supabaseUserDisplayName = displayName
+        }
     }
 
     @MainActor
@@ -455,6 +609,9 @@ final class AppSettings: ObservableObject {
             payload: payload
         )
         supabaseUserEmail = credentials.email
+        if !cleanFullName.isEmpty {
+            supabaseUserDisplayName = cleanFullName
+        }
 
         if applySupabaseSession(response) {
             hasCompletedSetupOnboarding = false
@@ -493,6 +650,7 @@ final class AppSettings: ObservableObject {
         UserDefaults.standard.removeObject(forKey: StorageKey.supabaseRefreshToken)
         supabaseSessionExpiresAt = nil
         backendToken = ""
+        supabaseUserDisplayName = ""
     }
 
     @MainActor
@@ -513,6 +671,9 @@ final class AppSettings: ObservableObject {
         supabaseSessionExpiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
         if let email = response.user?.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
             supabaseUserEmail = email
+        }
+        if let displayName = response.user?.displayName {
+            supabaseUserDisplayName = displayName
         }
         return true
     }
@@ -608,6 +769,16 @@ private struct SupabaseAuthResponse: Decodable {
 
 private struct SupabaseUserInfo: Decodable {
     let email: String?
+    let user_metadata: SupabaseUserMetadata?
+
+    var displayName: String? {
+        let raw = user_metadata?.full_name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return raw.isEmpty ? nil : raw
+    }
+}
+
+private struct SupabaseUserMetadata: Decodable {
+    let full_name: String?
 }
 
 private enum AppSettingsError: LocalizedError {

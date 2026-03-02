@@ -1659,6 +1659,149 @@ function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text 
   return true;
 }
 
+const LANGUAGE_TARGET_ALIASES = [
+  ["en-US", ["english", "engelsk"]],
+  ["nb-NO", ["norwegian", "norsk", "bokmal", "bokmål"]],
+  ["nn-NO", ["nynorsk"]],
+  ["sv-SE", ["swedish", "svensk"]],
+  ["da-DK", ["danish", "dansk"]],
+  ["fi-FI", ["finnish", "finsk"]],
+  ["is-IS", ["icelandic", "islandsk"]],
+  ["de-DE", ["german", "tysk"]],
+  ["nl-NL", ["dutch", "nederlands", "nederlandsk"]],
+  ["fr-FR", ["french", "fransk"]],
+  ["es-ES", ["spanish", "spansk"]],
+  ["pt-PT", ["portuguese", "portugisisk"]],
+  ["it-IT", ["italian", "italiensk"]],
+  ["pl-PL", ["polish", "polsk"]],
+  ["cs-CZ", ["czech", "tsjekkisk"]],
+  ["sk-SK", ["slovak", "slovakisk"]],
+  ["hu-HU", ["hungarian", "ungarsk"]],
+  ["ro-RO", ["romanian", "rumensk"]],
+  ["bg-BG", ["bulgarian", "bulgarsk"]],
+  ["hr-HR", ["croatian", "kroatisk"]],
+  ["sr-RS", ["serbian", "serbisk"]],
+  ["sl-SI", ["slovenian", "slovensk", "slovensk språk"]],
+  ["el-GR", ["greek", "gresk"]],
+  ["uk-UA", ["ukrainian", "ukrainsk"]],
+  ["ru-RU", ["russian", "russisk"]],
+  ["tr-TR", ["turkish", "tyrkisk"]],
+  ["ar", ["arabic", "arabisk"]],
+  ["he-IL", ["hebrew", "hebraisk"]],
+  ["fa-IR", ["persian", "farsi", "persisk"]],
+  ["hi-IN", ["hindi"]],
+  ["bn-BD", ["bengali", "bangla", "bengalsk"]],
+  ["ur-PK", ["urdu"]],
+  ["pa-IN", ["punjabi", "panjabi", "punjabi språk"]],
+  ["gu-IN", ["gujarati", "gujarati språk"]],
+  ["mr-IN", ["marathi"]],
+  ["ta-IN", ["tamil"]],
+  ["te-IN", ["telugu"]],
+  ["ml-IN", ["malayalam"]],
+  ["kn-IN", ["kannada"]],
+  ["zh-CN", ["chinese", "mandarin", "kinesisk", "mandarin chinese"]],
+  ["ja-JP", ["japanese", "japansk"]],
+  ["ko-KR", ["korean", "koreansk"]],
+  ["th-TH", ["thai", "thailandsk"]],
+  ["vi-VN", ["vietnamese", "vietnamesisk"]],
+  ["id-ID", ["indonesian", "indonesisk", "bahasa indonesia"]],
+  ["ms-MY", ["malay", "malaysisk", "bahasa melayu"]],
+  ["tl-PH", ["tagalog", "filipino"]],
+  ["sw-KE", ["swahili"]],
+  ["am-ET", ["amharic", "amharisk"]],
+  ["zu-ZA", ["zulu"]],
+  ["af-ZA", ["afrikaans"]],
+  ["ca-ES", ["catalan", "katalansk"]],
+  ["lt-LT", ["lithuanian", "litauisk"]],
+  ["lv-LV", ["latvian", "latvisk"]],
+  ["et-EE", ["estonian", "estisk"]]
+];
+
+const LANGUAGE_ALIAS_LOOKUP = new Map(
+  LANGUAGE_TARGET_ALIASES.flatMap(([code, aliases]) =>
+    aliases.map((alias) => [String(alias).toLowerCase(), code])
+  )
+);
+
+const SORTED_LANGUAGE_ALIASES = [...LANGUAGE_ALIAS_LOOKUP.keys()]
+  .sort((a, b) => b.length - a.length);
+
+function instructionRequestsLanguageChange(instruction) {
+  const normalized = String(instruction || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  if (inferExplicitTargetLanguageFromInstruction(normalized)) {
+    return true;
+  }
+
+  const cues = [
+    /\btranslate\b/,
+    /\btranslation\b/,
+    /\btranslate this\b/,
+    /\btranslate it\b/,
+    /\btranslate to\b/,
+    /\boversett\b/,
+    /\boversette\b/,
+    /\boversett dette\b/,
+    /\boversett til\b/,
+    /\bpå engelsk\b/,
+    /\btil engelsk\b/,
+    /\bin english\b/,
+    /\bto english\b/,
+    /\bpå norsk\b/,
+    /\btil norsk\b/,
+    /\bin norwegian\b/,
+    /\bto norwegian\b/
+  ];
+
+  return cues.some((pattern) => pattern.test(normalized));
+}
+
+function inferExplicitTargetLanguageFromInstruction(instruction) {
+  const normalized = String(instruction || "")
+    .toLowerCase()
+    .replace(/[.,!?;:()[\]{}"']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return null;
+
+  const padded = ` ${normalized} `;
+  const targetPrefixes = [" to ", " into ", " in ", " til ", " på "];
+  const matches = new Set();
+
+  for (const alias of SORTED_LANGUAGE_ALIASES) {
+    const paddedAlias = ` ${alias} `;
+    for (const prefix of targetPrefixes) {
+      if (padded.includes(`${prefix}${alias} `)) {
+        return LANGUAGE_ALIAS_LOOKUP.get(alias) || null;
+      }
+    }
+
+    const pattern = new RegExp(`(^|\\s)${escapeRegExp(alias)}(?=\\s|$)`, "i");
+    if (pattern.test(normalized)) {
+      matches.add(LANGUAGE_ALIAS_LOOKUP.get(alias));
+      if (padded.includes(paddedAlias)) {
+        continue;
+      }
+    }
+  }
+
+  const compactMatches = [...matches].filter(Boolean);
+  if (compactMatches.length === 1 && /\b(translate|translation|oversett|oversette)\b/i.test(normalized)) {
+    const [singleMatch] = compactMatches;
+    if (singleMatch) {
+      return singleMatch;
+    }
+  }
+
+  return null;
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function handlePolish(body, requestSignal) {
   try {
     if (requestSignal?.aborted) {
@@ -1881,8 +2024,15 @@ async function handleRewrite(body, requestSignal) {
     const style = normalizeStyle(body?.style);
     const dictionary = getRequestDictionary(body);
     const correctedInput = applyDictionaryReplacements(applySelfCorrections(text), dictionary);
+    const explicitTargetLanguage = inferExplicitTargetLanguageFromInstruction(instruction);
+    const allowsLanguageChange = explicitTargetLanguage !== null || instructionRequestsLanguageChange(instruction);
+    const effectiveOutputLanguage = explicitTargetLanguage || lang;
 
-    const langRule = `Output language must be ${lang}. Do not translate into any other language.`;
+    const langRule = explicitTargetLanguage
+      ? `The instruction explicitly requests a language change. Output language must be ${explicitTargetLanguage}. Translate only because the instruction asks for it.`
+      : allowsLanguageChange
+        ? "Preserve the original text language by default. Only change the language if the instruction explicitly asks for translation or clearly names another target language. If the user asks to translate without naming a target language, infer the intended target from the instruction language and context."
+        : `Output language must stay ${lang}. Keep the same language as the original text. Do not translate into any other language unless the instruction explicitly requests translation.`;
     const styleRule = STYLE_RULES[style] || STYLE_RULES.clean;
     const dictionaryRule = buildDictionaryPromptClause(dictionary);
     const safetyRule = "Keep names, dates, numbers, and factual content unless the instruction explicitly requests changing them.";
@@ -1911,14 +2061,21 @@ async function handleRewrite(body, requestSignal) {
       return { status: 502, json: { error: "Model returned empty text." } };
     }
 
-    let finalText = sanitizeModelOutput(modelText, "generic", lang);
+    let finalText = sanitizeModelOutput(
+      modelText,
+      "generic",
+      explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang)
+    );
     finalText = normalizePunctuationArtifacts(
       applyDictionaryReplacements(finalText, dictionary)
     ).trim();
     if (!finalText) {
       return { status: 502, json: { error: "Model returned empty text." } };
     }
-    if (isLikelyWrongForTarget(finalText, lang)) {
+    if (!allowsLanguageChange && isLikelyWrongForTarget(finalText, lang)) {
+      return { status: 502, json: { error: "Model output language mismatch." } };
+    }
+    if (explicitTargetLanguage && isLikelyWrongForTarget(finalText, effectiveOutputLanguage)) {
       return { status: 502, json: { error: "Model output language mismatch." } };
     }
 
@@ -1930,7 +2087,7 @@ async function handleRewrite(body, requestSignal) {
     return {
       status: 200,
       json: {
-        language: lang,
+        language: effectiveOutputLanguage,
         text: finalText,
         appliedStyle: style,
         instruction,

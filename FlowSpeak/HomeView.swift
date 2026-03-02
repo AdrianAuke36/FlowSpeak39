@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import Speech
 import SwiftUI
 
 struct HomeView: View {
@@ -170,9 +171,9 @@ struct AuthGateView: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        AuthFeatureRow(icon: "mic.fill", text: "Hold fn to dictate")
-                        AuthFeatureRow(icon: "globe", text: "Hold fn + Shift to translate")
-                        AuthFeatureRow(icon: "wand.and.stars", text: "Select text + hold fn + Control to rewrite")
+                        AuthFeatureRow(icon: "mic.fill", text: "Hold \(settings.shortcutTriggerKey.dictateShortcut) to dictate")
+                        AuthFeatureRow(icon: "globe", text: "Hold \(settings.shortcutTriggerKey.translateShortcut) to translate")
+                        AuthFeatureRow(icon: "wand.and.stars", text: "Select text + hold \(settings.shortcutTriggerKey.rewriteShortcut) to rewrite")
                     }
                     .padding(.top, 4)
                 }
@@ -405,20 +406,26 @@ struct AuthFeatureRow: View {
 }
 
 private enum SetupOnboardingStep {
+    case speechRecognition
     case microphone
     case accessibility
+    case inputMonitoring
 }
 
 struct SetupOnboardingView: View {
     @ObservedObject private var settings = AppSettings.shared
 
-    @State private var step: SetupOnboardingStep = .microphone
+    @State private var step: SetupOnboardingStep = .speechRecognition
+    @State private var speechGranted: Bool = false
     @State private var microphoneGranted: Bool = false
     @State private var accessibilityGranted: Bool = false
+    @State private var inputMonitoringGranted: Bool = false
     @State private var statusText: String = ""
 
+    private let speechRecognitionSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!
     private let microphoneSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+    private let inputMonitoringSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
 
     var body: some View {
         ZStack {
@@ -448,9 +455,9 @@ struct SetupOnboardingView: View {
                             .foregroundStyle(.white.opacity(0.94))
                     }
 
-                    if step == .accessibility {
+                    if step != .speechRecognition {
                         Button {
-                            step = .microphone
+                            step = previousStep(for: step)
                             statusText = ""
                         } label: {
                             Label("Back", systemImage: "arrow.left")
@@ -471,12 +478,8 @@ struct SetupOnboardingView: View {
                         .lineSpacing(5)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if step == .microphone, microphoneGranted {
-                        permissionBadge(text: "Microphone access granted", color: AppTheme.success)
-                    }
-
-                    if step == .accessibility, accessibilityGranted {
-                        permissionBadge(text: "Accessibility access granted", color: AppTheme.success)
+                    if currentStepGranted {
+                        permissionBadge(text: grantedBadgeText, color: AppTheme.success)
                     }
 
                     if !statusText.isEmpty {
@@ -516,39 +519,80 @@ struct SetupOnboardingView: View {
 
     private var stepTitle: String {
         switch step {
+        case .speechRecognition:
+            return "Enable speech recognition"
         case .microphone:
             return "Set up your microphone"
         case .accessibility:
             return "Enable Accessibility"
+        case .inputMonitoring:
+            return "Enable Input Monitoring"
         }
     }
 
     private var stepSubtitle: String {
         switch step {
+        case .speechRecognition:
+            return "FlowSpeak uses Apple's speech recognition to turn your voice into text. Allow this first so dictation can start."
         case .microphone:
             return "FlowSpeak only activates your microphone when you choose to start dictation."
         case .accessibility:
             return "FlowSpeak needs accessibility access to paste dictation into focused text fields and run rewrite."
+        case .inputMonitoring:
+            return "FlowSpeak needs input monitoring to detect the fn key globally and trigger dictation shortcuts."
         }
     }
 
     private var primaryActionTitle: String {
         switch step {
+        case .speechRecognition:
+            let status = SFSpeechRecognizer.authorizationStatus()
+            if speechGranted { return "Continue" }
+            if status == .denied || status == .restricted { return "Open Speech Settings" }
+            return "Allow speech recognition"
         case .microphone:
-            if microphoneGranted { return "Open Microphone Settings" }
+            if microphoneGranted { return "Continue" }
             if AVCaptureDevice.authorizationStatus(for: .audio) == .denied { return "Open Microphone Settings" }
             return "Allow microphone"
         case .accessibility:
-            return accessibilityGranted ? "Finish setup" : "Allow access"
+            return accessibilityGranted ? "Continue" : "Open Accessibility Settings"
+        case .inputMonitoring:
+            return inputMonitoringGranted ? "Finish setup" : "Allow input monitoring"
         }
     }
 
     private var showsContinueButton: Bool {
-        step == .microphone
+        step == .speechRecognition || step == .microphone || step == .accessibility
     }
 
     private var canContinue: Bool {
-        microphoneGranted
+        currentStepGranted
+    }
+
+    private var currentStepGranted: Bool {
+        switch step {
+        case .speechRecognition:
+            return speechGranted
+        case .microphone:
+            return microphoneGranted
+        case .accessibility:
+            return accessibilityGranted
+        case .inputMonitoring:
+            return inputMonitoringGranted
+        }
+    }
+
+    private var grantedBadgeText: String {
+        switch step {
+        case .speechRecognition:
+            return "Speech recognition granted"
+        case .microphone:
+            return "Microphone access granted"
+        case .accessibility:
+            return "Accessibility access granted"
+        case .inputMonitoring:
+            return "Input Monitoring granted"
+        }
     }
 
     @ViewBuilder
@@ -558,18 +602,16 @@ struct SetupOnboardingView: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 72, height: 72)
                 .overlay(
-                    Image(systemName: step == .microphone ? "mic.fill" : "hand.raised.fill")
+                    Image(systemName: stepIconName)
                         .font(.system(size: 32, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.9))
                 )
 
-            Text(step == .microphone ? "Microphone access" : "Accessibility access")
+            Text(stepCardTitle)
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.94))
 
-            Text(step == .microphone
-                 ? "macOS will ask once. After you allow it, FlowSpeak can start recording when you hold fn."
-                 : "Turn on FlowSpeak in Privacy & Security. When you come back, Continue will unlock automatically.")
+            Text(stepCardDescription)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.white.opacity(0.62))
                 .lineSpacing(4)
@@ -577,12 +619,20 @@ struct SetupOnboardingView: View {
 
             HStack(spacing: 8) {
                 permissionStatePill(
+                    label: "Speech",
+                    granted: speechGranted
+                )
+                permissionStatePill(
                     label: "Microphone",
                     granted: microphoneGranted
                 )
                 permissionStatePill(
                     label: "Accessibility",
                     granted: accessibilityGranted
+                )
+                permissionStatePill(
+                    label: "Input",
+                    granted: inputMonitoringGranted
                 )
             }
             .padding(.top, 6)
@@ -632,18 +682,48 @@ struct SetupOnboardingView: View {
 
     private func primaryAction() {
         switch step {
+        case .speechRecognition:
+            handleSpeechRecognitionAction()
         case .microphone:
             handleMicrophoneAction()
         case .accessibility:
             handleAccessibilityAction()
+        case .inputMonitoring:
+            handleInputMonitoringAction()
         }
     }
 
     private func continueAction() {
-        guard microphoneGranted else { return }
-        step = .accessibility
+        guard currentStepGranted else { return }
+        step = nextStep(for: step)
         statusText = ""
         refreshPermissionState()
+    }
+
+    private func handleSpeechRecognitionAction() {
+        let status = SFSpeechRecognizer.authorizationStatus()
+        switch status {
+        case .authorized:
+            speechGranted = true
+            continueAction()
+        case .notDetermined:
+            SFSpeechRecognizer.requestAuthorization { authorizationStatus in
+                DispatchQueue.main.async {
+                    self.refreshPermissionState()
+                    if authorizationStatus == .authorized {
+                        self.statusText = ""
+                        self.continueAction()
+                    } else {
+                        self.statusText = "Speech recognition was denied. Open System Settings to allow it."
+                    }
+                }
+            }
+        case .denied, .restricted:
+            statusText = "Enable speech recognition in System Settings, then return to FlowSpeak."
+            NSWorkspace.shared.open(speechRecognitionSettingsURL)
+        @unknown default:
+            statusText = "Unable to verify speech recognition permission."
+        }
     }
 
     private func handleMicrophoneAction() {
@@ -675,25 +755,105 @@ struct SetupOnboardingView: View {
     private func handleAccessibilityAction() {
         refreshPermissionState()
         guard !accessibilityGranted else {
-            settings.completeSetupOnboarding()
+            continueAction()
             return
         }
 
-        statusText = "Enable FlowSpeak in Privacy & Security, then return here and press Finish setup."
+        statusText = "Enable FlowSpeak in Privacy & Security, then return here and press Continue."
         NSWorkspace.shared.open(accessibilitySettingsURL)
     }
 
-    private func refreshPermissionState() {
-        microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        accessibilityGranted = AXIsProcessTrusted()
-
-        if microphoneGranted && accessibilityGranted {
+    private func handleInputMonitoringAction() {
+        refreshPermissionState()
+        guard !inputMonitoringGranted else {
             settings.completeSetupOnboarding()
             return
         }
 
-        if microphoneGranted && step == .microphone {
-            step = .accessibility
+        let granted = CGRequestListenEventAccess()
+        refreshPermissionState()
+        if granted {
+            settings.completeSetupOnboarding()
+        } else {
+            statusText = "Enable FlowSpeak in Input Monitoring, then return here and press Finish setup."
+            NSWorkspace.shared.open(inputMonitoringSettingsURL)
+        }
+    }
+
+    private func refreshPermissionState() {
+        speechGranted = SFSpeechRecognizer.authorizationStatus() == .authorized
+        microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        accessibilityGranted = AXIsProcessTrusted()
+        inputMonitoringGranted = CGPreflightListenEventAccess()
+
+        if speechGranted && microphoneGranted && accessibilityGranted && inputMonitoringGranted {
+            settings.completeSetupOnboarding()
+            return
+        }
+    }
+
+    private var stepIconName: String {
+        switch step {
+        case .speechRecognition:
+            return "waveform.badge.magnifyingglass"
+        case .microphone:
+            return "mic.fill"
+        case .accessibility:
+            return "hand.raised.fill"
+        case .inputMonitoring:
+            return "keyboard.fill"
+        }
+    }
+
+    private var stepCardTitle: String {
+        switch step {
+        case .speechRecognition:
+            return "Speech recognition"
+        case .microphone:
+            return "Microphone access"
+        case .accessibility:
+            return "Accessibility access"
+        case .inputMonitoring:
+            return "Input Monitoring"
+        }
+    }
+
+    private var stepCardDescription: String {
+        switch step {
+        case .speechRecognition:
+            return "macOS asks once for voice transcription. After you allow it, FlowSpeak can use Apple's speech recognition engine."
+        case .microphone:
+            return "macOS asks once for microphone access. After you allow it, FlowSpeak can record when you hold fn."
+        case .accessibility:
+            return "Turn on FlowSpeak in Privacy & Security. When you come back, Continue unlocks automatically."
+        case .inputMonitoring:
+            return "FlowSpeak uses this only to detect the fn shortcut globally. Turn it on, then finish setup."
+        }
+    }
+
+    private func nextStep(for current: SetupOnboardingStep) -> SetupOnboardingStep {
+        switch current {
+        case .speechRecognition:
+            return .microphone
+        case .microphone:
+            return .accessibility
+        case .accessibility:
+            return .inputMonitoring
+        case .inputMonitoring:
+            return .inputMonitoring
+        }
+    }
+
+    private func previousStep(for current: SetupOnboardingStep) -> SetupOnboardingStep {
+        switch current {
+        case .speechRecognition:
+            return .speechRecognition
+        case .microphone:
+            return .speechRecognition
+        case .accessibility:
+            return .microphone
+        case .inputMonitoring:
+            return .accessibility
         }
     }
 }
@@ -718,6 +878,7 @@ private struct OnboardingPrimaryButtonStyle: ButtonStyle {
 // MARK: - Sidebar
 
 struct Sidebar: View {
+    @ObservedObject private var settings = AppSettings.shared
     @Binding var activePage: HomeView.Page
 
     var body: some View {
@@ -759,13 +920,13 @@ struct Sidebar: View {
                 Label("Snarveier", systemImage: "keyboard")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(AppTheme.primaryText)
-                Label("Fn: Dictate", systemImage: "mic.fill")
+                Label("\(settings.shortcutTriggerKey.compactLabel): Dictate", systemImage: "mic.fill")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(AppTheme.secondaryText)
-                Label("Fn + Shift: Translate", systemImage: "globe")
+                Label("\(settings.shortcutTriggerKey.compactLabel) + Shift: Translate", systemImage: "globe")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(AppTheme.secondaryText)
-                Label("Fn + Control: Rewrite", systemImage: "wand.and.stars")
+                Label("\(settings.shortcutTriggerKey.compactLabel) + Ctrl: Rewrite", systemImage: "wand.and.stars")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(AppTheme.secondaryText)
             }
@@ -985,7 +1146,7 @@ struct MainPage: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(alignment: .top) {
-                Text("Velkommen tilbake")
+                Text(welcomeTitle)
                     .font(.system(size: 20, weight: .bold, design: .serif))
                     .foregroundStyle(AppTheme.primaryText)
 
@@ -996,6 +1157,7 @@ struct MainPage: View {
                     StatPill(icon: "🔥", value: streakLabel)
                     StatPill(icon: "🚀", value: "\(history.todayWordCount) ord")
                     StatPill(icon: "📝", value: "\(history.todayEntries.count) dikteringer")
+                    StatPill(icon: "🌿", value: "1% klimabidrag")
                 }
             }
             .padding(.horizontal, 28)
@@ -1040,6 +1202,14 @@ struct MainPage: View {
     private var streakLabel: String {
         let days = history.entries.isEmpty ? 0 : 1
         return "\(days) dag"
+    }
+
+    private var welcomeTitle: String {
+        let name = settings.greetingDisplayName
+        if name.isEmpty {
+            return "Velkommen tilbake"
+        }
+        return "Velkommen tilbake, \(name)"
     }
 }
 
