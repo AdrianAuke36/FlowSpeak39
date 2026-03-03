@@ -8,10 +8,12 @@
 import AppKit
 import Carbon.HIToolbox
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var history = DictationHistory.shared
+    @ObservedObject private var appLog = AppLogStore.shared
 
     @State private var showsAdvancedAuthSettings: Bool = false
     @State private var showsShortcutSettings: Bool = false
@@ -265,6 +267,62 @@ struct SettingsView: View {
                     .groupBoxStyle(StoreGroupBoxStyle())
 
                     GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Klientloggen lagrer lokale auth-, permission- og AI-feil, slik at testere kan sende deg noe konkret når appen stopper.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(AppTheme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            HStack(spacing: 8) {
+                                Text("Hendelser: \(appLog.entryCount)")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(AppTheme.primaryText)
+
+                                Spacer()
+
+                                Button("Copy debug log") {
+                                    copyDebugLog()
+                                }
+                                .buttonStyle(StoreSecondaryButtonStyle())
+                                .disabled(appLog.entryCount == 0)
+
+                                Button("Save debug log…") {
+                                    saveDebugLog()
+                                }
+                                .buttonStyle(StoreSecondaryButtonStyle())
+                                .disabled(appLog.entryCount == 0)
+
+                                Button("Clear debug log") {
+                                    appLog.clear()
+                                }
+                                .buttonStyle(StoreSecondaryButtonStyle())
+                                .disabled(appLog.entryCount == 0)
+                            }
+
+                            if let latest = appLog.latestSummary, !latest.isEmpty {
+                                Text(latest)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(AppTheme.secondaryText)
+                                    .lineLimit(2)
+                                    .padding(10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(AppTheme.surfaceMuted)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                                            )
+                                    )
+                            }
+                        }
+                    } label: {
+                        Text("Diagnostics")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .groupBoxStyle(StoreGroupBoxStyle())
+
+                    GroupBox {
                         Text("Permissions: aktiver FlowSpeak i Privacy & Security → Accessibility + Input Monitoring.")
                             .font(.system(size: 12))
                             .foregroundStyle(AppTheme.secondaryText)
@@ -424,6 +482,34 @@ struct SettingsView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(AppTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func copyDebugLog() {
+        let text = appLog.exportText()
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func saveDebugLog() {
+        let text = appLog.exportText()
+        guard !text.isEmpty else { return }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "FlowSpeak-debug-log-\(formatter.string(from: Date())).txt"
+        panel.allowedContentTypes = [.plainText]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            supabaseAuthStatus = "Could not save debug log. \(error.localizedDescription)"
+            AppLogStore.shared.record(.error, "Debug log save failed", metadata: ["error": error.localizedDescription])
         }
     }
 

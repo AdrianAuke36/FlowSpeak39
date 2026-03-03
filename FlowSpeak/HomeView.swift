@@ -410,6 +410,10 @@ struct AuthGateView: View {
                 }
             } catch {
                 statusText = error.localizedDescription
+                AppLogStore.shared.record(.warning, "Auth action failed", metadata: [
+                    "mode": mode == .signIn ? "sign_in" : "sign_up",
+                    "error": error.localizedDescription
+                ])
             }
         }
     }
@@ -426,6 +430,7 @@ struct AuthGateView: View {
         guard !isBusy else { return }
         guard !showsConfigurationWarning else {
             statusText = "Auth is not configured yet."
+            AppLogStore.shared.record(.warning, "Password reset blocked", metadata: ["reason": "auth_not_configured"])
             return
         }
 
@@ -440,6 +445,7 @@ struct AuthGateView: View {
                 statusText = "If the account exists, a password reset email has been sent."
             } catch {
                 statusText = error.localizedDescription
+                AppLogStore.shared.record(.warning, "Password reset failed", metadata: ["error": error.localizedDescription])
             }
         }
     }

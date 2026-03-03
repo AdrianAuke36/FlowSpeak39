@@ -77,6 +77,7 @@ const SUPABASE_JWT_ENABLED = SUPABASE_JWKS_URL.length > 0;
 const SUPABASE_REST_URL = String(process.env.SUPABASE_REST_URL || (SUPABASE_URL ? `${SUPABASE_URL}/rest/v1` : "")).trim().replace(/\/+$/, "");
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 const SUPABASE_BILLING_TABLE = String(process.env.SUPABASE_BILLING_TABLE || "billing_subscriptions").trim();
+const DAILY_USAGE_TABLE = String(process.env.DAILY_USAGE_TABLE || "daily_usage_counters").trim() || "daily_usage_counters";
 const SUPABASE_USER_COLUMN = String(process.env.SUPABASE_USER_COLUMN || "user_id").trim();
 const SUPABASE_STRIPE_CUSTOMER_COLUMN = String(process.env.SUPABASE_STRIPE_CUSTOMER_COLUMN || "stripe_customer_id").trim();
 const STRIPE_WEBHOOK_SECRET = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
@@ -102,6 +103,8 @@ const DAILY_USAGE_MAX_AUTH_FREE = Math.max(0, Number(process.env.DAILY_USAGE_MAX
 const DAILY_USAGE_MAX_AUTH_PRO = Math.max(0, Number(process.env.DAILY_USAGE_MAX_AUTH_PRO || 5_000));
 const DAILY_USAGE_MAX_AUTH_TEAM = Math.max(0, Number(process.env.DAILY_USAGE_MAX_AUTH_TEAM || 10_000));
 const DAILY_USAGE_MAX_AUTH_ENTERPRISE = Math.max(0, Number(process.env.DAILY_USAGE_MAX_AUTH_ENTERPRISE || 25_000));
+const DAILY_USAGE_SUPABASE_ENABLED = SUPABASE_REST_URL.length > 0 && SUPABASE_SERVICE_ROLE_KEY.length > 0;
+const DAILY_USAGE_SUPABASE_RETRY_MAX = Math.max(1, Number(process.env.DAILY_USAGE_SUPABASE_RETRY_MAX || 4));
 const TRUSTED_PROXY_IPS = parseListEnv(process.env.TRUSTED_PROXY_IPS || "");
 const RATE_LIMIT_BUCKETS = new Map();
 const DAILY_USAGE_BUCKETS = new Map();
@@ -114,6 +117,8 @@ const FASTPATH_CACHE_MAX_ITEMS = Math.max(10, Number(process.env.FASTPATH_CACHE_
 const FASTPATH_CACHE = new Map();
 const METRICS_HISTORY_MAX = Math.max(100, Number(process.env.METRICS_HISTORY_MAX || 2_000));
 const METRICS_HISTORY = [];
+const ERROR_HISTORY_MAX = Math.max(20, Number(process.env.ERROR_HISTORY_MAX || 250));
+const ERROR_HISTORY = [];
 const STARTED_AT_MS = Date.now();
 let SUPABASE_REMOTE_JWKS = null;
 const LOG_REQUEST_CONTENT = String(process.env.LOG_REQUEST_CONTENT || "").toLowerCase() === "true";
@@ -245,7 +250,7 @@ function cleanupDailyUsageBuckets(dayKey = currentUsageDayKey()) {
   }
 }
 
-function peekDailyUsage(principalKey, plan) {
+function peekDailyUsageMemory(principalKey, plan) {
   const normalizedPlan = normalizePlan(plan);
   const limit = resolveDailyUsageLimit(normalizedPlan);
   const dayKey = currentUsageDayKey();
@@ -274,7 +279,7 @@ function peekDailyUsage(principalKey, plan) {
   };
 }
 
-function consumeDailyUsage(principalKey, plan) {
+function consumeDailyUsageMemory(principalKey, plan) {
   const normalizedPlan = normalizePlan(plan);
   const limit = resolveDailyUsageLimit(normalizedPlan);
   const dayKey = currentUsageDayKey();
@@ -313,6 +318,264 @@ function consumeDailyUsage(principalKey, plan) {
     enabled: true,
     allowed: bucket.count <= limit
   };
+}
+
+function buildSupabaseAdminHeaders(extra = {}) {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    ...extra
+  };
+}
+
+async function supabaseAdminRequest(endpoint, {
+  method = "GET",
+  body = undefined,
+  headers = {}
+} = {}) {
+  const response = await fetch(endpoint, {
+    method,
+    headers: {
+      ...(body == null ? {} : { "Content-Type": "application/json" }),
+      ...buildSupabaseAdminHeaders(headers)
+    },
+    body: body == null ? undefined : JSON.stringify(body)
+  });
+
+  const bodyText = await response.text();
+  let json = null;
+  if (bodyText) {
+    try {
+      json = JSON.parse(bodyText);
+    } catch {
+      json = null;
+    }
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    json,
+    bodyText
+  };
+}
+
+function recordBackendError(scope, details = {}) {
+  const entry = {
+    at: new Date().toISOString(),
+    scope: String(scope || "unknown"),
+    ...details
+  };
+  ERROR_HISTORY.push(entry);
+  if (ERROR_HISTORY.length > ERROR_HISTORY_MAX) {
+    ERROR_HISTORY.splice(0, ERROR_HISTORY.length - ERROR_HISTORY_MAX);
+  }
+  console.warn("⚠️ backend:", JSON.stringify(entry));
+}
+
+function recentBackendErrors(limit = 20) {
+  return ERROR_HISTORY.slice(-limit).reverse();
+}
+
+function dailyUsageStorageMode() {
+  return DAILY_USAGE_SUPABASE_ENABLED ? "supabase" : "memory";
+}
+
+function buildDailyUsageResult(dayKey, plan, used) {
+  const normalizedPlan = normalizePlan(plan);
+  const limit = resolveDailyUsageLimit(normalizedPlan);
+  const safeUsed = Math.max(0, Number(used || 0));
+
+  if (limit <= 0) {
+    return {
+      dayKey,
+      plan: normalizedPlan,
+      limit: 0,
+      used: safeUsed,
+      remaining: 0,
+      enabled: false
+    };
+  }
+
+  return {
+    dayKey,
+    plan: normalizedPlan,
+    limit,
+    used: safeUsed,
+    remaining: Math.max(0, limit - safeUsed),
+    enabled: true
+  };
+}
+
+function dailyUsageTableBaseURL() {
+  return `${SUPABASE_REST_URL}/${encodeURIComponent(DAILY_USAGE_TABLE)}`;
+}
+
+async function readDailyUsageRowSupabase(dayKey, principalKey) {
+  const endpoint = `${dailyUsageTableBaseURL()}?select=day_key,principal_key,plan,request_count&day_key=eq.${encodeURIComponent(dayKey)}&principal_key=eq.${encodeURIComponent(principalKey)}&limit=1`;
+  const response = await supabaseAdminRequest(endpoint);
+  if (!response.ok) {
+    throw new Error(`read failed (${response.status}): ${response.bodyText.slice(0, 200)}`);
+  }
+  const row = Array.isArray(response.json) ? response.json[0] : null;
+  return row || null;
+}
+
+async function createDailyUsageRowSupabase(dayKey, principalKey, plan) {
+  const response = await supabaseAdminRequest(dailyUsageTableBaseURL(), {
+    method: "POST",
+    headers: {
+      Prefer: "return=representation"
+    },
+    body: [{
+      day_key: dayKey,
+      principal_key: principalKey,
+      plan,
+      request_count: 1
+    }]
+  });
+
+  if (response.status === 409) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`insert failed (${response.status}): ${response.bodyText.slice(0, 200)}`);
+  }
+
+  const row = Array.isArray(response.json) ? response.json[0] : null;
+  if (!row) {
+    throw new Error("insert failed: empty response");
+  }
+  return row;
+}
+
+async function updateDailyUsageRowSupabase(dayKey, principalKey, plan, currentCount) {
+  const nextCount = Math.max(0, Number(currentCount || 0)) + 1;
+  const endpoint = `${dailyUsageTableBaseURL()}?day_key=eq.${encodeURIComponent(dayKey)}&principal_key=eq.${encodeURIComponent(principalKey)}&request_count=eq.${encodeURIComponent(currentCount)}`;
+  const response = await supabaseAdminRequest(endpoint, {
+    method: "PATCH",
+    headers: {
+      Prefer: "return=representation"
+    },
+    body: {
+      request_count: nextCount,
+      plan,
+      updated_at: new Date().toISOString()
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`update failed (${response.status}): ${response.bodyText.slice(0, 200)}`);
+  }
+
+  const row = Array.isArray(response.json) ? response.json[0] : null;
+  return row || null;
+}
+
+async function peekDailyUsageSupabase(principalKey, plan) {
+  const dayKey = currentUsageDayKey();
+  const row = await readDailyUsageRowSupabase(dayKey, principalKey);
+  return buildDailyUsageResult(dayKey, row?.plan || plan, Number(row?.request_count || 0));
+}
+
+async function consumeDailyUsageSupabase(principalKey, plan) {
+  const normalizedPlan = normalizePlan(plan);
+  const dayKey = currentUsageDayKey();
+  const limit = resolveDailyUsageLimit(normalizedPlan);
+  if (limit <= 0) {
+    return {
+      ...buildDailyUsageResult(dayKey, normalizedPlan, 0),
+      allowed: true
+    };
+  }
+
+  for (let attempt = 0; attempt < DAILY_USAGE_SUPABASE_RETRY_MAX; attempt += 1) {
+    const current = await readDailyUsageRowSupabase(dayKey, principalKey);
+    let row = null;
+
+    if (!current) {
+      row = await createDailyUsageRowSupabase(dayKey, principalKey, normalizedPlan);
+      if (!row) {
+        continue;
+      }
+    } else {
+      row = await updateDailyUsageRowSupabase(
+        dayKey,
+        principalKey,
+        normalizedPlan,
+        Number(current.request_count || 0)
+      );
+      if (!row) {
+        continue;
+      }
+    }
+
+    const usage = buildDailyUsageResult(dayKey, row.plan || normalizedPlan, Number(row.request_count || 0));
+    return {
+      ...usage,
+      allowed: !usage.enabled || usage.used <= usage.limit
+    };
+  }
+
+  throw new Error(`daily usage update exhausted after ${DAILY_USAGE_SUPABASE_RETRY_MAX} attempts`);
+}
+
+async function summarizeDailyUsageSupabase() {
+  const dayKey = currentUsageDayKey();
+  const endpoint = `${dailyUsageTableBaseURL()}?select=plan,request_count&day_key=eq.${encodeURIComponent(dayKey)}`;
+  const response = await supabaseAdminRequest(endpoint);
+  if (!response.ok) {
+    throw new Error(`summary failed (${response.status}): ${response.bodyText.slice(0, 200)}`);
+  }
+
+  const rows = Array.isArray(response.json) ? response.json : [];
+  const byPlan = {};
+  let totalRequests = 0;
+  for (const row of rows) {
+    const plan = normalizePlan(row?.plan || "free");
+    const count = Math.max(0, Number(row?.request_count || 0));
+    totalRequests += count;
+    byPlan[plan] = (byPlan[plan] || 0) + count;
+  }
+
+  return {
+    dayKey,
+    activeUsers: rows.length,
+    totalRequests,
+    byPlan
+  };
+}
+
+async function peekDailyUsage(principalKey, plan) {
+  if (!DAILY_USAGE_SUPABASE_ENABLED) {
+    return peekDailyUsageMemory(principalKey, plan);
+  }
+
+  try {
+    return await peekDailyUsageSupabase(principalKey, plan);
+  } catch (error) {
+    recordBackendError("daily_usage_peek_fallback", {
+      storage: "memory",
+      message: error?.message || "unknown"
+    });
+    return peekDailyUsageMemory(principalKey, plan);
+  }
+}
+
+async function consumeDailyUsage(principalKey, plan) {
+  if (!DAILY_USAGE_SUPABASE_ENABLED) {
+    return consumeDailyUsageMemory(principalKey, plan);
+  }
+
+  try {
+    return await consumeDailyUsageSupabase(principalKey, plan);
+  } catch (error) {
+    recordBackendError("daily_usage_consume_fallback", {
+      storage: "memory",
+      message: error?.message || "unknown"
+    });
+    return consumeDailyUsageMemory(principalKey, plan);
+  }
 }
 
 function decodeBase64Url(input) {
@@ -778,7 +1041,7 @@ function summarizePolishMetrics() {
   };
 }
 
-function summarizeDailyUsage() {
+function summarizeDailyUsageMemory() {
   const dayKey = currentUsageDayKey();
   cleanupDailyUsageBuckets(dayKey);
 
@@ -803,6 +1066,22 @@ function summarizeDailyUsage() {
     totalRequests,
     byPlan
   };
+}
+
+async function summarizeDailyUsage() {
+  if (!DAILY_USAGE_SUPABASE_ENABLED) {
+    return summarizeDailyUsageMemory();
+  }
+
+  try {
+    return await summarizeDailyUsageSupabase();
+  } catch (error) {
+    recordBackendError("daily_usage_summary_fallback", {
+      storage: "memory",
+      message: error?.message || "unknown"
+    });
+    return summarizeDailyUsageMemory();
+  }
 }
 
 function buildFastpathCacheKey(body) {
@@ -2910,7 +3189,8 @@ const server = createServer(async (req, res) => {
           pro: DAILY_USAGE_MAX_AUTH_PRO,
           team: DAILY_USAGE_MAX_AUTH_TEAM,
           enterprise: DAILY_USAGE_MAX_AUTH_ENTERPRISE
-        }
+        },
+        dailyUsageStorage: dailyUsageStorageMode()
       },
       fastpathCache: {
         enabled: FASTPATH_CACHE_TTL_MS > 0,
@@ -2930,19 +3210,26 @@ const server = createServer(async (req, res) => {
   if (method === "GET" && url.pathname === "/metrics") {
     const auth = await verifyToken(req);
     if (!auth.ok) {
+      recordBackendError("metrics_auth_failed", {
+        path: url.pathname,
+        status: auth.status,
+        message: auth.error
+      });
       sendJson(req, res, auth.status, { error: auth.error });
       return;
     }
     const currentUserUsage = auth.authenticated
-      ? peekDailyUsage(auth.tokenHash, auth.plan)
+      ? await peekDailyUsage(auth.tokenHash, auth.plan)
       : null;
     sendJson(req, res, 200, {
       tag: BACKEND_TAG,
       ...summarizePolishMetrics(),
       dailyUsage: {
-        global: summarizeDailyUsage(),
+        storage: dailyUsageStorageMode(),
+        global: await summarizeDailyUsage(),
         currentUser: currentUserUsage
-      }
+      },
+      recentErrors: recentBackendErrors()
     });
     return;
   }
@@ -2951,6 +3238,11 @@ const server = createServer(async (req, res) => {
     const endpointStartedAt = Date.now();
     const auth = await verifyToken(req);
     if (!auth.ok) {
+      recordBackendError("polish_auth_failed", {
+        path: url.pathname,
+        status: auth.status,
+        message: auth.error
+      });
       recordPolishMetric({
         status: auth.status,
         endpointMs: Date.now() - endpointStartedAt,
@@ -3001,6 +3293,13 @@ const server = createServer(async (req, res) => {
     const parsed = await readJsonBody(req);
     if (!parsed.ok) {
       if (requestAbortController.signal.aborted || res.writableEnded || res.destroyed) return;
+      recordBackendError("polish_bad_request", {
+        path: url.pathname,
+        status: parsed.status,
+        auth: auth.authType,
+        plan: auth.plan,
+        message: parsed.error
+      });
       recordPolishMetric({
         status: parsed.status,
         endpointMs: Date.now() - endpointStartedAt,
@@ -3019,7 +3318,7 @@ const server = createServer(async (req, res) => {
     }
 
     const dailyUsage = auth.authenticated
-      ? consumeDailyUsage(auth.tokenHash, auth.plan)
+      ? await consumeDailyUsage(auth.tokenHash, auth.plan)
       : null;
     if (dailyUsage && !dailyUsage.allowed) {
       recordPolishMetric({
@@ -3074,6 +3373,15 @@ const server = createServer(async (req, res) => {
     const result = await handlePolish(parsed.body, requestAbortController.signal);
     if (requestAbortController.signal.aborted || res.writableEnded || res.destroyed) return;
     if (result.status === 499) return;
+    if (result.status >= 500) {
+      recordBackendError("polish_failed", {
+        path: url.pathname,
+        status: result.status,
+        auth: auth.authType,
+        plan: auth.plan,
+        message: String(result?.json?.error || "Unknown polish failure")
+      });
+    }
     const endpointMs = Date.now() - endpointStartedAt;
     if (!cacheBypass && result.status >= 200 && result.status < 300) {
       setFastpathCache(cacheKey, {
@@ -3104,6 +3412,11 @@ const server = createServer(async (req, res) => {
   if (method === "POST" && url.pathname === "/rewrite") {
     const auth = await verifyToken(req);
     if (!auth.ok) {
+      recordBackendError("rewrite_auth_failed", {
+        path: url.pathname,
+        status: auth.status,
+        message: auth.error
+      });
       sendJson(req, res, auth.status, { error: auth.error });
       return;
     }
@@ -3138,6 +3451,13 @@ const server = createServer(async (req, res) => {
     const parsed = await readJsonBody(req);
     if (!parsed.ok) {
       if (requestAbortController.signal.aborted || res.writableEnded || res.destroyed) return;
+      recordBackendError("rewrite_bad_request", {
+        path: url.pathname,
+        status: parsed.status,
+        auth: auth.authType,
+        plan: auth.plan,
+        message: parsed.error
+      });
       sendJson(req, res, parsed.status, { error: parsed.error }, {
         "X-RateLimit-Limit": String(rate.limit),
         "X-RateLimit-Remaining": String(rate.remaining),
@@ -3148,7 +3468,7 @@ const server = createServer(async (req, res) => {
     }
 
     const dailyUsage = auth.authenticated
-      ? consumeDailyUsage(auth.tokenHash, auth.plan)
+      ? await consumeDailyUsage(auth.tokenHash, auth.plan)
       : null;
     if (dailyUsage && !dailyUsage.allowed) {
       sendJson(req, res, 429, {
@@ -3171,6 +3491,15 @@ const server = createServer(async (req, res) => {
     const result = await handleRewrite(parsed.body, requestAbortController.signal);
     if (requestAbortController.signal.aborted || res.writableEnded || res.destroyed) return;
     if (result.status === 499) return;
+    if (result.status >= 500) {
+      recordBackendError("rewrite_failed", {
+        path: url.pathname,
+        status: result.status,
+        auth: auth.authType,
+        plan: auth.plan,
+        message: String(result?.json?.error || "Unknown rewrite failure")
+      });
+    }
     sendJson(req, res, result.status, result.json, {
       "X-RateLimit-Limit": String(rate.limit),
       "X-RateLimit-Remaining": String(rate.remaining),

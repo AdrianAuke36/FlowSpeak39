@@ -621,6 +621,7 @@ final class AppSettings: ObservableObject {
         if let displayName = response.user?.displayName {
             supabaseUserDisplayName = displayName
         }
+        AppLogStore.shared.record(.info, "Signed in", metadata: ["email": credentials.email])
     }
 
     @MainActor
@@ -659,9 +660,11 @@ final class AppSettings: ObservableObject {
 
         if applySupabaseSession(response) {
             hasCompletedSetupOnboarding = false
+            AppLogStore.shared.record(.info, "Account created and signed in", metadata: ["email": credentials.email])
             return .signedIn
         }
 
+        AppLogStore.shared.record(.info, "Account created, awaiting confirmation", metadata: ["email": credentials.email])
         return .confirmationRequired
     }
 
@@ -684,17 +687,20 @@ final class AppSettings: ObservableObject {
             )
             return applySupabaseSession(response)
         } catch {
+            AppLogStore.shared.record(.warning, "JWT refresh failed", metadata: ["error": error.localizedDescription])
             return false
         }
     }
 
     @MainActor
     func signOutSupabaseSession() {
+        let previousEmail = supabaseUserEmail
         cachedSupabaseRefreshToken = ""
         UserDefaults.standard.removeObject(forKey: StorageKey.supabaseRefreshToken)
         supabaseSessionExpiresAt = nil
         backendToken = ""
         supabaseUserDisplayName = ""
+        AppLogStore.shared.record(.info, "Signed out", metadata: previousEmail.isEmpty ? [:] : ["email": previousEmail])
     }
 
     @MainActor
@@ -712,6 +718,7 @@ final class AppSettings: ObservableObject {
             path: "/auth/v1/recover",
             payload: ["email": cleanEmail]
         )
+        AppLogStore.shared.record(.info, "Password reset requested", metadata: ["email": cleanEmail])
     }
 
     @MainActor

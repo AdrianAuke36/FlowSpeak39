@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var pendingRewriteTargetApp: NSRunningApplication?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppLogStore.shared.record(.info, "App launched")
         NSApp.setActivationPolicy(.accessory)
 
         configureDictationCallbacks()
@@ -640,6 +641,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func presentRewriteError(_ message: String) {
         print("❌ rewrite:", message)
+        AppLogStore.shared.record(.warning, "Rewrite failed", metadata: ["message": message])
         if message.localizedCaseInsensitiveContains("Accessibility permission") {
             PermissionController.shared.show(type: .accessibility)
         } else {

@@ -248,6 +248,7 @@ final class DictationController: NSObject {
             } catch {
                 DispatchQueue.main.async {
                     print("❌ AI draft failed:", error.localizedDescription)
+                    AppLogStore.shared.record(.warning, "AI draft failed", metadata: ["error": error.localizedDescription])
                     persistImmediate()
                     // Keep the already inserted raw text on failure.
                 }
@@ -1108,6 +1109,9 @@ final class DictationController: NSObject {
     }
 
     private func reportCaptureInterruption(_ message: String?) {
+        if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            AppLogStore.shared.record(.warning, "Capture interrupted", metadata: ["message": message])
+        }
         DispatchQueue.main.async {
             self.onCaptureInterrupted?(message)
         }
