@@ -45,6 +45,7 @@ const OPENAI_RETRIES = Math.max(1, Number(process.env.OPENAI_RETRIES || 1));
 const OPENAI_RETRY_BACKOFF_MS = Math.max(0, Number(process.env.OPENAI_RETRY_BACKOFF_MS || 80));
 const OPENAI_MAX_TOKENS_POLISH = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH || 96));
 const OPENAI_MAX_TOKENS_POLISH_SHORT = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH_SHORT || 72));
+const OPENAI_MAX_TOKENS_POLISH_MEANING = Math.max(64, Number(process.env.OPENAI_MAX_TOKENS_POLISH_MEANING || 160));
 const OPENAI_MAX_TOKENS_POLISH_TRANSLATE = Math.max(32, Number(process.env.OPENAI_MAX_TOKENS_POLISH_TRANSLATE || 80));
 const OPENAI_MAX_TOKENS_POLISH_SUBJECT = Math.max(24, Number(process.env.OPENAI_MAX_TOKENS_POLISH_SUBJECT || 48));
 const OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY = Math.max(64, Number(process.env.OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY || 144));
@@ -1132,7 +1133,7 @@ const STYLE_RULES = {
 const INTERPRETATION_RULES = {
   literal: "Interpretation: literal. Stay as close as possible to the spoken wording and order. Preserve phrasing, hesitations, and sentence structure unless something is clearly a recognition artifact.",
   balanced: "Interpretation: balanced. Clean up the text while staying close to what the user said.",
-  meaning: "Interpretation: meaning. Optimize for clarity and intended meaning. You may rephrase awkward wording, merge fragments, and remove hesitations, but do not add new facts."
+  meaning: "Interpretation: meaning. Prioritize the user's likely intent over literal wording. You may merge fragments, reorder ideas, smooth awkward phrasing, and turn rough speech into the clearest natural sentence or paragraph, but do not add new facts, commitments, or requests."
 };
 
 function normalizeStyle(raw) {
@@ -1749,16 +1750,32 @@ function countWords(text) {
   return trimmed.split(/\s+/).length;
 }
 
-function resolvePolishMaxTokens(mode, text, targetLanguageForced) {
+function resolvePolishMaxTokens(mode, text, targetLanguageForced, interpretationLevel) {
   const normalizedMode = String(mode || "generic").trim().toLowerCase();
+  const normalizedInterpretationLevel = normalizeInterpretationLevel(interpretationLevel);
   const textLength = String(text || "").trim().length;
 
   // Short translations do not need the broader drafting token budget.
   if (targetLanguageForced && textLength <= 80) {
-    return Math.max(32, Math.min(64, OPENAI_MAX_TOKENS_POLISH_TRANSLATE));
+    const literalBudget = Math.max(32, Math.min(64, OPENAI_MAX_TOKENS_POLISH_TRANSLATE));
+    return normalizedInterpretationLevel === "meaning"
+      ? Math.max(literalBudget, 96)
+      : literalBudget;
   }
   if (targetLanguageForced && textLength <= 220) {
-    return OPENAI_MAX_TOKENS_POLISH_TRANSLATE;
+    return normalizedInterpretationLevel === "meaning"
+      ? Math.max(OPENAI_MAX_TOKENS_POLISH_TRANSLATE, 112)
+      : OPENAI_MAX_TOKENS_POLISH_TRANSLATE;
+  }
+
+  if (normalizedInterpretationLevel === "meaning") {
+    if (normalizedMode === "email_subject") {
+      return Math.max(OPENAI_MAX_TOKENS_POLISH_SUBJECT, 72);
+    }
+    if (normalizedMode === "email_body") {
+      return Math.max(OPENAI_MAX_TOKENS_POLISH_EMAIL_BODY, OPENAI_MAX_TOKENS_POLISH_MEANING);
+    }
+    return OPENAI_MAX_TOKENS_POLISH_MEANING;
   }
 
   if (normalizedMode === "email_subject") return OPENAI_MAX_TOKENS_POLISH_SUBJECT;
@@ -1784,7 +1801,7 @@ function buildPolishSystemPrompt({
     const translationRule = interpretationLevel === "literal"
       ? "Translate as literally as possible. Stay close to the source wording and structure unless a direct translation would be unclear."
       : interpretationLevel === "meaning"
-        ? "Translate for intended meaning and readability. You may rephrase awkward wording so the result reads naturally."
+        ? "Translate for intended meaning and the best possible phrasing. Resolve fragmented speech, implied punctuation, and rough wording into the clearest natural translation."
         : "Preserve meaning, names, numbers, and formatting.";
 
     return `Translate the user's text into ${lang}. ${translationRule} Do not add commentary, alternatives, or extra context. Return exactly one final translation only as plain text. ${dictionaryRule}`;
@@ -1808,7 +1825,9 @@ function buildPolishSystemPrompt({
     : "No added greetings/sign-offs unless already present.";
   const singleDraftRule = "Return exactly one final draft only. Never include alternatives, translations, duplicate versions, or placeholders like [Your Name].";
   const correctionRule = "If user self-corrects (e.g. 'nei, jeg mener', 'eller nei', 'no, I mean'), keep only the final corrected detail and remove superseded earlier versions.";
-  const fidelityRule = "Do not invent new facts, topics, requests, names, or questions. Rewrite only what is explicitly in the input.";
+  const fidelityRule = interpretationLevel === "meaning"
+    ? "You may infer the intended structure of fragmented speech, but do not invent new facts, topics, names, commitments, or questions that are not grounded in the input."
+    : "Do not invent new facts, topics, requests, names, or questions. Rewrite only what is explicitly in the input.";
   const recipientRule = mode === "email_body"
     ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
     : "";
@@ -2093,7 +2112,12 @@ async function handlePolish(body, requestSignal) {
           system,
           user: correctedInput,
           requestSignal,
-          maxTokens: resolvePolishMaxTokens(mode, correctedInput, targetLanguageForced),
+          maxTokens: resolvePolishMaxTokens(
+            mode,
+            correctedInput,
+            targetLanguageForced,
+            interpretationLevel
+          ),
           wantsJsonOutput: !targetLanguageForced
         });
         timings.modelAttempts = attempts;

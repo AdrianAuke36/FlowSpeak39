@@ -225,6 +225,46 @@ struct SettingsView: View {
                     .groupBoxStyle(StoreGroupBoxStyle())
 
                     GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            privacyInfoRow(
+                                title: "Talegjenkjenning",
+                                detail: "FlowSpeak bruker Apples talegjenkjenning etter at du har gitt tillatelse. macOS kan sende taledata til Apple for å behandle forespørslene."
+                            )
+
+                            privacyInfoRow(
+                                title: "AI-behandling",
+                                detail: "Teksten du dikterer sendes til FlowSpeak-backenden. Hvis AI er aktiv, sender backenden tekst videre til OpenAI for formatering, oversettelse og rewrite."
+                            )
+
+                            privacyInfoRow(
+                                title: "Lokalt lagret på denne Mac-en",
+                                detail: "Dikteringshistorikk, språk- og stilvalg, valgt mikrofon og aktiv innloggingsøkt lagres lokalt på denne maskinen."
+                            )
+
+                            privacyInfoRow(
+                                title: "Konto",
+                                detail: "Innlogging og sesjonsfornying håndteres via Supabase."
+                            )
+
+                            HStack(spacing: 8) {
+                                Button("Clear local history") {
+                                    history.clearAll()
+                                }
+                                .buttonStyle(StoreSecondaryButtonStyle())
+
+                                Button("Sign out and clear local session") {
+                                    clearLocalPrivateData()
+                                }
+                                .buttonStyle(StoreSecondaryButtonStyle())
+                            }
+                        }
+                    } label: {
+                        Text("Privacy")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .groupBoxStyle(StoreGroupBoxStyle())
+
+                    GroupBox {
                         Text("Permissions: aktiver FlowSpeak i Privacy & Security → Accessibility + Input Monitoring.")
                             .font(.system(size: 12))
                             .foregroundStyle(AppTheme.secondaryText)
@@ -372,6 +412,19 @@ struct SettingsView: View {
                             .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
                     )
             )
+    }
+
+    private func privacyInfoRow(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AppTheme.primaryText)
+
+            Text(detail)
+                .font(.system(size: 12))
+                .foregroundStyle(AppTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var showsModalOverlay: Bool {
@@ -782,6 +835,14 @@ struct SettingsView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(token, forType: .string)
+    }
+
+    private func clearLocalPrivateData() {
+        history.clearAll()
+        settings.signOutSupabaseSession(clearRememberedEmail: true)
+        supabaseEmailInput = ""
+        supabasePasswordInput = ""
+        supabaseAuthStatus = "Local history and session removed from this Mac."
     }
 
     private func startShortcutCapture() {

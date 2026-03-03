@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var languageMenuItems: [AppLanguage: NSMenuItem] = [:]
     private var translationMenuItems: [AppLanguage: NSMenuItem] = [:]
     private var styleMenuItems: [WritingStyle: NSMenuItem] = [:]
+    private var interpretationMenuItems: [InterpretationLevel: NSMenuItem] = [:]
     private var normalStatusImage: NSImage { makeMenuBarImage(state: .normal) }
     private var warningStatusImage: NSImage { makeMenuBarImage(state: .warning) }
     private var recordingStatusImage: NSImage { makeMenuBarImage(state: .recording) }
@@ -718,6 +719,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(makeMicrophoneRootMenuItem())
         menu.addItem(makeLanguagesRootMenuItem())
         menu.addItem(makeStyleRootMenuItem())
+        menu.addItem(makeInterpretationRootMenuItem())
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makeSectionHeader(title: "Account"))
@@ -806,6 +808,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         rootItem.submenu = styleMenu
+        return rootItem
+    }
+
+    private func makeInterpretationRootMenuItem() -> NSMenuItem {
+        let rootItem = NSMenuItem(title: "Forståelse", action: nil, keyEquivalent: "")
+        let interpretationMenu = NSMenu(title: "Forståelse")
+        interpretationMenuItems.removeAll()
+
+        for interpretationLevel in InterpretationLevel.allCases {
+            let item = makeMenuItem(title: interpretationLevel.label, action: #selector(selectInterpretationLevel(_:)))
+            item.representedObject = interpretationLevel.rawValue
+            item.toolTip = interpretationLevel.description
+            interpretationMenu.addItem(item)
+            interpretationMenuItems[interpretationLevel] = item
+        }
+
+        rootItem.submenu = interpretationMenu
         return rootItem
     }
 
@@ -947,6 +966,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func refreshInterpretationMenuState() {
+        for (interpretationLevel, item) in interpretationMenuItems {
+            item.state = settings.interpretationLevel == interpretationLevel ? .on : .off
+        }
+    }
+
     private func applyLanguage(_ language: AppLanguage, persist: Bool) {
         if persist {
             settings.appLanguage = language
@@ -976,6 +1001,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings.interpretationLevel = interpretationLevel
         }
         dictation.setInterpretationLevel(interpretationLevel)
+        refreshInterpretationMenuState()
     }
 
     private func applyBackendConfiguration(baseURL: String, token: String, persist: Bool) {
@@ -1026,6 +1052,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let style = WritingStyle(rawValue: raw)
         else { return }
         applyStyle(style, persist: true)
+    }
+
+    @objc private func selectInterpretationLevel(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let interpretationLevel = InterpretationLevel(rawValue: raw)
+        else { return }
+        applyInterpretationLevel(interpretationLevel, persist: true)
     }
 
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
