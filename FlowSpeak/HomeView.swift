@@ -466,6 +466,15 @@ private enum SetupOnboardingStep {
     case microphone
     case accessibility
     case inputMonitoring
+
+    var order: Int {
+        switch self {
+        case .speechRecognition: return 0
+        case .microphone: return 1
+        case .accessibility: return 2
+        case .inputMonitoring: return 3
+        }
+    }
 }
 
 struct SetupOnboardingView: View {
@@ -673,21 +682,32 @@ struct SetupOnboardingView: View {
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(minimum: 120), spacing: 10),
+                    GridItem(.flexible(minimum: 120), spacing: 10)
+                ],
+                alignment: .leading,
+                spacing: 10
+            ) {
                 permissionStatePill(
-                    label: "Speech",
+                    step: .speechRecognition,
+                    label: "Speech recognition",
                     granted: speechGranted
                 )
                 permissionStatePill(
+                    step: .microphone,
                     label: "Microphone",
                     granted: microphoneGranted
                 )
                 permissionStatePill(
+                    step: .accessibility,
                     label: "Accessibility",
                     granted: accessibilityGranted
                 )
                 permissionStatePill(
-                    label: "Input",
+                    step: .inputMonitoring,
+                    label: "Input monitoring",
                     granted: inputMonitoringGranted
                 )
             }
@@ -720,19 +740,37 @@ struct SetupOnboardingView: View {
         )
     }
 
-    private func permissionStatePill(label: String, granted: Bool) -> some View {
-        HStack(spacing: 6) {
+    private func permissionStatePill(step cardStep: SetupOnboardingStep, label: String, granted: Bool) -> some View {
+        let isCurrentStep = cardStep == step
+        return HStack(alignment: .center, spacing: 8) {
+            Image(systemName: cardStep.iconName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(isCurrentStep ? Color.white.opacity(0.95) : Color.white.opacity(0.72))
+
             Image(systemName: granted ? "checkmark.circle.fill" : "minus.circle")
-                .foregroundStyle(granted ? AppTheme.success : Color.white.opacity(0.4))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(granted ? AppTheme.success : Color.white.opacity(0.5))
             Text(label)
                 .font(.system(size: 12, weight: .semibold))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
         .foregroundStyle(.white.opacity(0.82))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
         .background(
-            Capsule()
-                .fill(Color.white.opacity(0.06))
+            RoundedRectangle(cornerRadius: 14)
+                .fill(isCurrentStep ? Color.white.opacity(0.14) : Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(
+                            isCurrentStep ? AppTheme.accent.opacity(0.55) : Color.white.opacity(0.10),
+                            lineWidth: 1
+                        )
+                )
         )
     }
 
@@ -761,14 +799,14 @@ struct SetupOnboardingView: View {
         switch status {
         case .authorized:
             speechGranted = true
-            continueAction()
+            statusText = "Speech recognition is ready. Press Continue when you want to move on."
+            refreshPermissionState()
         case .notDetermined:
             SFSpeechRecognizer.requestAuthorization { authorizationStatus in
                 DispatchQueue.main.async {
                     self.refreshPermissionState()
                     if authorizationStatus == .authorized {
-                        self.statusText = ""
-                        self.continueAction()
+                        self.statusText = "Speech recognition is ready. Press Continue when you want to move on."
                     } else {
                         self.statusText = "Speech recognition was denied. Open System Settings to allow it."
                     }
@@ -787,14 +825,14 @@ struct SetupOnboardingView: View {
         switch status {
         case .authorized:
             microphoneGranted = true
-            continueAction()
+            statusText = "Microphone access is ready. Press Continue when you want to move on."
+            refreshPermissionState()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { granted in
                 DispatchQueue.main.async {
                     self.refreshPermissionState()
                     if granted {
-                        self.statusText = ""
-                        self.continueAction()
+                        self.statusText = "Microphone access is ready. Press Continue when you want to move on."
                     } else {
                         self.statusText = "Microphone access was denied. Open System Settings to allow it."
                     }
@@ -848,7 +886,10 @@ struct SetupOnboardingView: View {
             return
         }
 
-        step = firstIncompleteStep
+        let incompleteStep = firstIncompleteStep
+        if incompleteStep.order < step.order {
+            step = incompleteStep
+        }
     }
 
     private var firstIncompleteStep: SetupOnboardingStep {
@@ -859,16 +900,7 @@ struct SetupOnboardingView: View {
     }
 
     private var stepIconName: String {
-        switch step {
-        case .speechRecognition:
-            return "waveform.badge.magnifyingglass"
-        case .microphone:
-            return "mic.fill"
-        case .accessibility:
-            return "hand.raised.fill"
-        case .inputMonitoring:
-            return "keyboard.fill"
-        }
+        step.iconName
     }
 
     private var stepCardTitle: String {
@@ -920,6 +952,21 @@ struct SetupOnboardingView: View {
             return .microphone
         case .inputMonitoring:
             return .accessibility
+        }
+    }
+}
+
+private extension SetupOnboardingStep {
+    var iconName: String {
+        switch self {
+        case .speechRecognition:
+            return "waveform.badge.magnifyingglass"
+        case .microphone:
+            return "mic.fill"
+        case .accessibility:
+            return "hand.raised.fill"
+        case .inputMonitoring:
+            return "keyboard.fill"
         }
     }
 }

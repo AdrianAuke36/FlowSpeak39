@@ -5,7 +5,7 @@ import ApplicationServices
 import Combine
 import NaturalLanguage
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private enum MenuBarVisualState {
         case normal
         case warning
@@ -107,6 +107,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         Task { await self.pollBackendHealth() }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.configureHomeWindowBehavior()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        configureHomeWindowBehavior()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            openHome()
+        }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -120,6 +139,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSEvent.removeMonitor(localFlagsMonitor)
             self.localFlagsMonitor = nil
         }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard isHomeWindow(sender) else { return true }
+        sender.orderOut(nil)
+        return false
     }
 
     private func observeSettingsChanges() {
@@ -1017,8 +1042,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openHome() {
         NSApp.activate(ignoringOtherApps: true)
+        configureHomeWindowBehavior()
         for window in NSApp.windows {
-            if window.identifier?.rawValue == "home" || window.title.contains("FlowSpeak") {
+            if isHomeWindow(window) {
                 window.makeKeyAndOrderFront(nil)
                 return
             }
@@ -1076,5 +1102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private func configureHomeWindowBehavior() {
+        for window in NSApp.windows where isHomeWindow(window) {
+            window.delegate = self
+        }
+    }
+
+    private func isHomeWindow(_ window: NSWindow) -> Bool {
+        window.identifier?.rawValue == "home" || window.title.contains("FlowSpeak")
     }
 }
