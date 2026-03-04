@@ -199,6 +199,7 @@ struct AuthGateView: View {
                         AuthFeatureRow(icon: "mic.fill", text: "Hold \(settings.shortcutTriggerKey.dictateShortcut) to dictate")
                         AuthFeatureRow(icon: "globe", text: "Hold \(settings.shortcutTriggerKey.translateShortcut) to translate")
                         AuthFeatureRow(icon: "wand.and.stars", text: "Select text + hold \(settings.shortcutTriggerKey.rewriteShortcut) to rewrite")
+                        AuthFeatureRow(icon: "tray.and.arrow.down.fill", text: "Select message + press \(settings.shortcutTriggerKey.saveReplyContextShortcut) to save reply context")
                     }
                     .padding(.top, 4)
                 }
@@ -647,7 +648,7 @@ struct SetupOnboardingView: View {
     }
 
     private var showsContinueButton: Bool {
-        step == .speechRecognition || step == .microphone || step == .accessibility
+        currentStepGranted && (step == .speechRecognition || step == .microphone || step == .accessibility)
     }
 
     private var canContinue: Bool {
@@ -1072,6 +1073,9 @@ struct Sidebar: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(AppTheme.secondaryText)
                 Label("\(settings.shortcutTriggerKey.compactLabel) + Ctrl: Rewrite", systemImage: "wand.and.stars")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(AppTheme.secondaryText)
+                Label("\(settings.shortcutTriggerKey.compactLabel) + <: Save reply", systemImage: "tray.and.arrow.down.fill")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(AppTheme.secondaryText)
             }

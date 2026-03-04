@@ -273,6 +273,13 @@ final class DictationController: NSObject {
         return captured
     }
 
+    func cancelCapture() {
+        guard isCaptureActive else { return }
+        stopInternal()
+        resetSpeculativeState(cancel: true)
+        finalText = ""
+    }
+
     // MARK: - Insert
 
     private func insertText(_ text: String, insertMode: InsertionMode, completion: (() -> Void)?) {

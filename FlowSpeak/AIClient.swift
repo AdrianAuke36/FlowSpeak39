@@ -157,7 +157,10 @@ final class AIClient {
     func rewrite(
         text: String,
         instruction: String,
-        targetLanguageOverride: String? = nil
+        targetLanguageOverride: String? = nil,
+        replyMemories: [ReplyMemoryRule] = [],
+        draftReplyFromContext: Bool = false,
+        modeOverride: DraftMode? = nil
     ) async throws -> RewriteResponse {
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanText.isEmpty { throw AIClientError.emptyResponse }
@@ -180,12 +183,28 @@ final class AIClient {
         applyAuthorizationHeader(to: &req)
 
         let effectiveTargetLanguage = resolvedTargetLanguage(from: targetLanguageOverride)
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "text": cleanText,
             "instruction": cleanInstruction,
             "targetLanguage": effectiveTargetLanguage,
             "style": style.rawValue
         ]
+        if let modeOverride {
+            body["mode"] = modeOverride.rawValue
+        }
+        if !replyMemories.isEmpty {
+            body["replyMemories"] = replyMemories.map {
+                [
+                    "title": $0.title,
+                    "triggers": $0.triggerText,
+                    "sourceText": $0.sourceText,
+                    "guidance": $0.guidance
+                ]
+            }
+        }
+        if draftReplyFromContext {
+            body["draftReplyFromContext"] = true
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
         do {

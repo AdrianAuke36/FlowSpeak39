@@ -2279,6 +2279,98 @@ function inferExplicitTargetLanguageFromInstruction(instruction) {
   return null;
 }
 
+function normalizeReplyMemories(input) {
+  if (!Array.isArray(input)) return [];
+
+  return input
+    .map((item) => {
+      const title = String(item?.title || "").replace(/\s+/g, " ").trim();
+      const triggers = String(item?.triggers || "").replace(/\s+/g, " ").trim();
+      const sourceText = String(item?.sourceText || "").replace(/\s+/g, " ").trim();
+      const guidance = String(item?.guidance || "").replace(/\s+/g, " ").trim();
+      if (!title || !guidance) return null;
+      return {
+        title: title.slice(0, 80),
+        triggers: triggers.slice(0, 160),
+        sourceText: sourceText.slice(0, 500),
+        guidance: guidance.slice(0, 320)
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function classifyDraftReplyContext(text) {
+  const raw = String(text || "");
+  const normalized = raw
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const looksLikeInvitation = /\b(bryllup|wedding|invitation|invite|rsvp|ceremony|ceremoni|feiring)\b/.test(normalized);
+  const looksLikeSupport = /\b(bestilling|ordre|order|ordrenummer|tracking|shipment|delivery|levering|mottatt|received|refund|support|kundeservice|status|pakke)\b/.test(normalized);
+  const looksLikeEmail = /(^|\n)\s*(hei|hello|dear|kjære)\b/i.test(raw) ||
+    /\b(med vennlig hilsen|best regards|kind regards|vennlig hilsen)\b/.test(normalized) ||
+    /\b(takk for at du handler|thank you for your order|we confirm that we have received your order)\b/.test(normalized);
+
+  if (looksLikeSupport) {
+    return {
+      kind: "support",
+      minTokens: 260,
+      extraRule: "Write a complete customer-facing reply email. Acknowledge the message, clearly state the user's issue or request, and ask for a status update or next step when helpful. If the spoken instruction states a problem (for example not receiving an item), incorporate that problem into the reply as the main point."
+    };
+  }
+
+  if (looksLikeInvitation) {
+    return {
+      kind: "invitation",
+      minTokens: 240,
+      extraRule: "Write a complete polite reply to the invitation. Thank the sender, state the user's answer clearly, and keep the tone warm, natural, and socially appropriate."
+    };
+  }
+
+  if (looksLikeEmail) {
+    return {
+      kind: "email",
+      minTokens: 240,
+      extraRule: "Write a complete email-style reply. Include a natural greeting when appropriate, then the actual response the user wants to send, and keep it concise but complete."
+    };
+  }
+
+  return {
+    kind: "generic",
+    minTokens: 220,
+    extraRule: "Write a complete send-ready response, not a fragment. The final text should read like the actual message the user wants to send."
+  };
+}
+
+function normalizeDraftReplyInstruction(instruction) {
+  const trimmed = String(instruction || "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return trimmed;
+
+  const explicitPointMatch = trimmed.match(
+    /^(?:reply|respond|write|draft|say|tell|answer|svar|svare|skriv|si)\b.*?\b(?:that|at)\b\s+(.+)$/i
+  );
+  if (explicitPointMatch?.[1]) {
+    const point = explicitPointMatch[1].trim();
+    if (point) {
+      return `Write a complete polite reply that clearly communicates this point: ${point}`;
+    }
+  }
+
+  const alreadyReplyLike = /\b(reply|respond|write|draft|answer|svar|svare|skriv|besvar)\b/i.test(trimmed);
+  if (alreadyReplyLike) {
+    return trimmed;
+  }
+
+  const standaloneMessagePoint = /\b(i\b|i'm|im\b|i’ve|i've|my\b|mine\b|jeg\b|min\b|mitt\b|har ikke|have not|haven't|did not|didn't|kan ikke|cannot|can't|won't|vil ikke|ikke fått|not received|still waiting|fortsatt ikke)\b/i.test(trimmed);
+  if (standaloneMessagePoint) {
+    return `Write a complete polite reply that clearly communicates this point: ${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 function escapeRegExp(value) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -2511,6 +2603,9 @@ async function handleRewrite(body, requestSignal) {
   let correctedInput = "";
   let effectiveOutputLanguage = DEFAULT_TARGET_LANGUAGE;
   let allowsLanguageChange = false;
+  let draftReplyFromContext = false;
+  let replyMemories = [];
+  let requestedRewriteMode = "generic";
 
   try {
     if (requestSignal?.aborted) {
@@ -2531,11 +2626,20 @@ async function handleRewrite(body, requestSignal) {
 
     lang = normalizeTargetLanguage(body?.targetLanguage);
     style = normalizeStyle(body?.style);
+    draftReplyFromContext = body?.draftReplyFromContext === true;
+    replyMemories = normalizeReplyMemories(body?.replyMemories);
+    requestedRewriteMode = String(body?.mode || "generic").trim().toLowerCase();
     const dictionary = getRequestDictionary(body);
     correctedInput = applyDictionaryReplacements(applySelfCorrections(text), dictionary);
+    if (draftReplyFromContext) {
+      instruction = normalizeDraftReplyInstruction(instruction);
+    }
     const explicitTargetLanguage = inferExplicitTargetLanguageFromInstruction(instruction);
     allowsLanguageChange = explicitTargetLanguage !== null || instructionRequestsLanguageChange(instruction);
     effectiveOutputLanguage = explicitTargetLanguage || lang;
+    const replyContextProfile = draftReplyFromContext
+      ? classifyDraftReplyContext(correctedInput)
+      : null;
 
     const langRule = explicitTargetLanguage
       ? `The instruction explicitly requests a language change. Output language must be ${explicitTargetLanguage}. Translate only because the instruction asks for it.`
@@ -2546,15 +2650,32 @@ async function handleRewrite(body, requestSignal) {
     const dictionaryRule = buildDictionaryPromptClause(dictionary);
     const safetyRule = "Keep names, dates, numbers, and factual content unless the instruction explicitly requests changing them.";
     const singleDraftRule = "Return exactly one final draft only. Never include alternatives, notes, prefixes, or placeholders.";
-    const system = `Apply the user instruction to the provided text. ${styleRule} ${langRule} ${safetyRule} ${singleDraftRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}`;
+    const memoryRule = replyMemories.length
+      ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
+      : "";
+    const isEmailReplyMode = requestedRewriteMode === "email_body" || requestedRewriteMode === "email_subject";
+    const taskRule = draftReplyFromContext
+      ? `Draft a complete send-ready reply to the provided incoming message context. The provided text is the message being answered, not the draft to rewrite. Use the incoming message plus the spoken instruction to write the full response the user should send. ${replyContextProfile?.extraRule || ""} ${isEmailReplyMode ? "The user is writing inside an email field, so format the output as an actual email reply body, not a chat reply. Use a natural greeting when appropriate and write a complete email-ready response." : ""} Be polite, context-aware, and useful. Do not simply restate the spoken instruction, and do not return only a short fragment.`
+      : "Apply the user instruction to the provided text.";
+    const rewriteMaxTokens = draftReplyFromContext
+      ? Math.max(OPENAI_MAX_TOKENS_REWRITE, replyContextProfile?.minTokens || 220)
+      : OPENAI_MAX_TOKENS_REWRITE;
+    const system = `${taskRule} ${styleRule} ${langRule} ${safetyRule} ${singleDraftRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
+    const memorySection = replyMemories.length
+      ? `\n\nRelevant reply memories:\n${replyMemories.map((memory) => {
+        const triggerPart = memory.triggers ? ` (triggers: ${memory.triggers})` : "";
+        const sourcePart = memory.sourceText ? `\n  Saved incoming context: ${memory.sourceText}` : "";
+        return `- ${memory.title}${triggerPart}: ${memory.guidance}${sourcePart}`;
+      }).join("\n")}`
+      : "";
     timings.preprocessMs = Date.now() - requestStartedAt;
 
     const modelStartedAt = Date.now();
     const { response, attempts } = await requestModelDraft({
       system,
-      user: `Instruction:\n${instruction}\n\nText:\n${correctedInput}`,
+      user: `Instruction:\n${instruction}\n\n${draftReplyFromContext ? "Incoming message context" : "Text"}:\n${correctedInput}${memorySection}`,
       requestSignal,
-      maxTokens: OPENAI_MAX_TOKENS_REWRITE
+      maxTokens: rewriteMaxTokens
     });
     timings.modelAttempts = attempts;
     timings.modelMs = Date.now() - modelStartedAt;
@@ -2570,9 +2691,10 @@ async function handleRewrite(body, requestSignal) {
       return { status: 502, json: { error: "Model returned empty text." } };
     }
 
+    const sanitizeMode = isEmailReplyMode ? "email_body" : "generic";
     let finalText = sanitizeModelOutput(
       modelText,
-      "generic",
+      sanitizeMode,
       explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang)
     );
     finalText = normalizePunctuationArtifacts(

@@ -13,11 +13,16 @@ final class OverlayController {
         static let panelSize = NSSize(width: 132, height: 56)
         static let panelBottomOffset: CGFloat = 32
         static let hideDelay: TimeInterval = 0.25
+        static let saveToastSize = NSSize(width: 188, height: 62)
+        static let saveToastBottomOffset: CGFloat = 34
+        static let saveToastDuration: TimeInterval = 2.7
     }
 
     private var panel: NSPanel?
+    private var saveToastPanel: NSPanel?
     private let state = OverlayState()
     private var pendingHideWorkItem: DispatchWorkItem?
+    private var pendingSaveToastHideWorkItem: DispatchWorkItem?
     var onAccessoryButtonTap: (() -> Void)?
 
     init() {
@@ -59,6 +64,24 @@ final class OverlayController {
 
     func updatePartial(_ text: String) { }
     func showThinking(_ text: String) { }
+
+    func showSavedToast() {
+        pendingSaveToastHideWorkItem?.cancel()
+        pendingSaveToastHideWorkItem = nil
+
+        if saveToastPanel == nil {
+            setupSaveToastPanel()
+        }
+        positionSaveToastBottomCenter()
+        saveToastPanel?.contentView = NSHostingView(rootView: SaveToastPanelView())
+        saveToastPanel?.orderFrontRegardless()
+
+        let work = DispatchWorkItem { [weak self] in
+            self?.saveToastPanel?.orderOut(nil)
+        }
+        pendingSaveToastHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Constants.saveToastDuration, execute: work)
+    }
 
     private func setupPanel() {
         let host = NSHostingView(
@@ -104,6 +127,32 @@ final class OverlayController {
         positionBottomCenter()
     }
 
+    private func setupSaveToastPanel() {
+        let p = NSPanel(
+            contentRect: NSRect(origin: .zero, size: Constants.saveToastSize),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+
+        p.isFloatingPanel = true
+        p.level = .statusBar
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        p.hidesOnDeactivate = false
+        p.ignoresMouseEvents = true
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.titleVisibility = .hidden
+        p.titlebarAppearsTransparent = true
+        p.standardWindowButton(.closeButton)?.isHidden = true
+        p.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        p.standardWindowButton(.zoomButton)?.isHidden = true
+        p.hasShadow = false
+
+        saveToastPanel = p
+        positionSaveToastBottomCenter()
+    }
+
     private func bringToFront() {
         panel?.orderFrontRegardless()
     }
@@ -116,6 +165,16 @@ final class OverlayController {
         let x = frame.midX - w / 2
         let y = frame.minY + Constants.panelBottomOffset
         panel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
+    }
+
+    private func positionSaveToastBottomCenter() {
+        guard let screen = NSScreen.main, let saveToastPanel else { return }
+        let frame = screen.visibleFrame
+        let w = Constants.saveToastSize.width
+        let h = Constants.saveToastSize.height
+        let x = frame.midX - w / 2
+        let y = frame.minY + Constants.saveToastBottomOffset
+        saveToastPanel.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true)
     }
 }
 

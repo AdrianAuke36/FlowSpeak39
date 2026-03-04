@@ -184,8 +184,87 @@ enum ShortcutTriggerKey: String, CaseIterable, Identifiable {
         "\(label) + Control"
     }
 
+    var saveReplyContextShortcut: String {
+        "\(label) + <"
+    }
+
     var summary: String {
-        "\(dictateShortcut) · \(translateShortcut) · \(rewriteShortcut)"
+        "\(dictateShortcut) · \(translateShortcut) · \(rewriteShortcut) · \(saveReplyContextShortcut)"
+    }
+}
+
+struct ReplyMemoryRule: Identifiable, Codable, Hashable {
+    let id: String
+    var title: String
+    var triggerText: String
+    var sourceText: String
+    var guidance: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case triggerText
+        case sourceText
+        case guidance
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        title: String,
+        triggerText: String,
+        sourceText: String = "",
+        guidance: String
+    ) {
+        self.id = id
+        self.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.triggerText = triggerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.sourceText = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.guidance = guidance.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        title = (try container.decodeIfPresent(String.self, forKey: .title) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        triggerText = (try container.decodeIfPresent(String.self, forKey: .triggerText) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        sourceText = (try container.decodeIfPresent(String.self, forKey: .sourceText) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guidance = (try container.decodeIfPresent(String.self, forKey: .guidance) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(triggerText, forKey: .triggerText)
+        try container.encode(sourceText, forKey: .sourceText)
+        try container.encode(guidance, forKey: .guidance)
+    }
+
+    var triggerTokens: [String] {
+        triggerText
+            .split(whereSeparator: { $0 == "," || $0 == "\n" || $0 == ";" })
+            .map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+            .filter { !$0.isEmpty }
+    }
+
+    var summaryLine: String {
+        let trimmed = guidance.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "No guidance yet." }
+        if trimmed.count <= 100 { return trimmed }
+        return String(trimmed.prefix(97)) + "..."
+    }
+
+    func matches(text: String, instruction: String) -> Bool {
+        let haystack = "\(text) \(instruction)".lowercased()
+        let triggers = triggerTokens
+        guard !triggers.isEmpty else { return false }
+        return triggers.contains { haystack.contains($0) }
     }
 }
 
@@ -241,6 +320,7 @@ final class AppSettings: ObservableObject {
         static let supabaseSessionExpiresAt = "supabaseSessionExpiresAt"
         static let supabaseRefreshToken = "supabaseRefreshToken"
         static let hasCompletedSetupOnboarding = "hasCompletedSetupOnboarding"
+        static let replyMemories = "replyMemories"
         static let overrides = "overrides"
     }
 
@@ -386,6 +466,10 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(hasCompletedSetupOnboarding, forKey: StorageKey.hasCompletedSetupOnboarding) }
     }
 
+    @Published var replyMemories: [ReplyMemoryRule] {
+        didSet { saveReplyMemories() }
+    }
+
     @Published var isShortcutCaptureActive: Bool = false
 
     // bundleId -> modeRawValue
@@ -463,6 +547,12 @@ final class AppSettings: ObservableObject {
         } else {
             self.hasCompletedSetupOnboarding = UserDefaults.standard.bool(forKey: StorageKey.hasCompletedSetupOnboarding)
         }
+        if let data = UserDefaults.standard.data(forKey: StorageKey.replyMemories),
+           let rules = try? JSONDecoder().decode([ReplyMemoryRule].self, from: data) {
+            self.replyMemories = rules
+        } else {
+            self.replyMemories = []
+        }
         self.cachedSupabaseRefreshToken = UserDefaults.standard.string(forKey: StorageKey.supabaseRefreshToken)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -490,9 +580,48 @@ final class AppSettings: ObservableObject {
         overrides.removeValue(forKey: bundleId)
     }
 
+    func addReplyMemory(title: String, triggerText: String, sourceText: String, guidance: String) {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanTriggers = triggerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanSourceText = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanGuidance = guidance.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty, !cleanTriggers.isEmpty, !cleanGuidance.isEmpty else { return }
+
+        replyMemories.append(
+            ReplyMemoryRule(
+                title: cleanTitle,
+                triggerText: cleanTriggers,
+                sourceText: cleanSourceText,
+                guidance: cleanGuidance
+            )
+        )
+    }
+
+    func removeReplyMemory(id: String) {
+        replyMemories.removeAll { $0.id == id }
+    }
+
+    func matchingReplyMemories(for text: String, instruction: String, limit: Int = 3) -> [ReplyMemoryRule] {
+        replyMemories
+            .filter { $0.matches(text: text, instruction: instruction) }
+            .prefix(limit)
+            .map { $0 }
+    }
+
     private func saveOverrides() {
         if let data = try? JSONEncoder().encode(overrides) {
             UserDefaults.standard.set(data, forKey: StorageKey.overrides)
+        }
+    }
+
+    private func saveReplyMemories() {
+        if replyMemories.isEmpty {
+            UserDefaults.standard.removeObject(forKey: StorageKey.replyMemories)
+            return
+        }
+
+        if let data = try? JSONEncoder().encode(replyMemories) {
+            UserDefaults.standard.set(data, forKey: StorageKey.replyMemories)
         }
     }
 
@@ -603,7 +732,7 @@ final class AppSettings: ObservableObject {
 
     var shortcutInstructionText: String {
         let trigger = shortcutTriggerKey.label
-        return "Hold \(trigger) for å starte diktering. Slipp \(trigger) for å sette inn teksten. Hold \(trigger) + Shift for oversettelse i én diktering. Marker tekst, hold \(trigger) + Control mens du sier rewrite-instruksjonen, og slipp \(trigger) for å kjøre."
+        return "Hold \(trigger) for å starte diktering. Slipp \(trigger) for å sette inn teksten. Hold \(trigger) + Shift for oversettelse i én diktering. Marker tekst og trykk \(trigger) + < for å lagre siste melding midlertidig. Hold \(trigger) + Control mens du sier rewrite-instruksjonen, og slipp \(trigger) for å kjøre."
     }
 
     @MainActor

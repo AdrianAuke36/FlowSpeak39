@@ -31,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var globalFlagsMonitor: Any?
     private var localFlagsMonitor: Any?
+    private var globalKeyDownMonitor: Any?
+    private var localKeyDownMonitor: Any?
 
     private var backendStatusItem: NSMenuItem?
     private var aiMenuItem: NSMenuItem?
@@ -60,8 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var didConsumeFnHoldForRewriteCombo: Bool = false
     private var isPersistentCaptureLocked: Bool = false
     private var isSelectionRewriteInProgress: Bool = false
+    private var isSavingQuickReplyContext: Bool = false
     private var isCapturingRewriteInstruction: Bool = false
     private var pendingRewriteTargetApp: NSRunningApplication?
+    private var quickReplyContextText: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogStore.shared.record(.info, "App launched")
@@ -139,6 +143,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let localFlagsMonitor {
             NSEvent.removeMonitor(localFlagsMonitor)
             self.localFlagsMonitor = nil
+        }
+        if let globalKeyDownMonitor {
+            NSEvent.removeMonitor(globalKeyDownMonitor)
+            self.globalKeyDownMonitor = nil
+        }
+        if let localKeyDownMonitor {
+            NSEvent.removeMonitor(localKeyDownMonitor)
+            self.localKeyDownMonitor = nil
         }
     }
 
@@ -250,6 +262,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.handleFlagsChangedEvent(event)
             return event
         }
+        globalKeyDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKeyDownEvent(event)
+        }
+        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return self.handleKeyDownEvent(event) ? nil : event
+        }
     }
 
     private func handleFlagsChangedEvent(_ event: NSEvent) {
@@ -258,6 +277,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         updateModifierState(from: event)
         processModifierStateSnapshot()
+    }
+
+    @discardableResult
+    private func handleKeyDownEvent(_ event: NSEvent) -> Bool {
+        if settings.isShortcutCaptureActive {
+            return false
+        }
+        if event.isARepeat {
+            return false
+        }
+        if !selectedTriggerIsDown || shiftIsDown || controlIsDown {
+            return false
+        }
+
+        let isQuickReplyContextShortcut =
+            event.keyCode == UInt16(kVK_ISO_Section) ||
+            (event.charactersIgnoringModifiers?.trimmingCharacters(in: .whitespacesAndNewlines) == "<")
+        guard isQuickReplyContextShortcut else {
+            return false
+        }
+
+        cancelPendingFnStart()
+        if dictation.isCaptureActive {
+            dictation.cancelCapture()
+            isPersistentCaptureLocked = false
+            overlay.setLocked(false)
+            overlay.hide()
+            updateStatusIcon(isRecording: false)
+        }
+        Task { @MainActor [weak self] in
+            await self?.captureQuickReplyContext()
+        }
+        return true
     }
 
     private func processModifierStateSnapshot() {
@@ -474,6 +526,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         print("🔐 AX trusted: \(AXIsProcessTrusted())")
     }
 
+    @MainActor
+    private func captureQuickReplyContext() async {
+        guard !isSavingQuickReplyContext else { return }
+        guard !dictation.isCaptureActive else { return }
+        guard !isSelectionRewriteInProgress else { return }
+        guard !PermissionController.shared.checkAndPromptIfNeededForRewrite() else { return }
+
+        isSavingQuickReplyContext = true
+        defer { isSavingQuickReplyContext = false }
+
+        let targetApp = NSWorkspace.shared.frontmostApplication
+        targetApp?.activate(options: [])
+        try? await Task.sleep(nanoseconds: Constants.rewriteCopyDelayNanos)
+
+        let (snapshot, selectedText) = await readSelectedTextFromFocusedApp()
+        defer { restorePasteboardSnapshot(snapshot) }
+
+        let trimmed = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            NSSound.beep()
+            AppLogStore.shared.record(.warning, "Quick reply context capture failed", metadata: ["reason": "No selected text"])
+            return
+        }
+
+        quickReplyContextText = trimmed
+        playQuickReplySavedSound()
+        overlay.showSavedToast()
+        AppLogStore.shared.record(.info, "Quick reply context saved", metadata: ["chars": "\(trimmed.count)"])
+        print("💾 quick reply context saved | chars:", trimmed.count)
+    }
+
+    private func playQuickReplySavedSound() {
+        if let sound = NSSound(named: "Glass") ?? NSSound(named: "Hero") {
+            sound.play()
+        } else {
+            NSSound.beep()
+        }
+    }
+
+    @MainActor
+    private func readSelectedTextFromFocusedApp() async -> (PasteboardSnapshot, String) {
+        let snapshot = capturePasteboardSnapshot()
+        let sentinel = "__flowspeak_selection__\(UUID().uuidString)"
+        writeStringToPasteboard(sentinel)
+        sendCmdC()
+        try? await Task.sleep(nanoseconds: Constants.rewriteCopyDelayNanos)
+        let copiedText = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if copiedText == sentinel {
+            return (snapshot, "")
+        }
+        return (snapshot, copiedText)
+    }
+
     // MARK: - Selection rewrite
 
     private func beginRewriteFromVoiceInstruction() {
@@ -578,28 +684,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         overlay.showListening(mode: .rewrite)
         try? await Task.sleep(nanoseconds: Constants.rewriteCopyDelayNanos)
 
-        let snapshot = capturePasteboardSnapshot()
-        sendCmdC()
-        try? await Task.sleep(nanoseconds: Constants.rewriteCopyDelayNanos)
+        let contextResolver = ContextResolver()
+        let rewriteFieldContext = contextResolver.resolve()
+        let rewriteMode = rewriteFieldContext.map { contextResolver.draftMode(for: $0) }
 
-        let selectedText = NSPasteboard.general.string(forType: .string)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !selectedText.isEmpty else {
+        let (snapshot, copiedSelection) = await readSelectedTextFromFocusedApp()
+        let usesQuickReplyContext = copiedSelection.isEmpty && !quickReplyContextText.isEmpty
+        let sourceText = usesQuickReplyContext ? quickReplyContextText : copiedSelection
+
+        guard !sourceText.isEmpty else {
             restorePasteboardSnapshot(snapshot)
-            presentRewriteError("No selected text found. Highlight text and try again.")
+            presentRewriteError("No selected text found. Highlight text, or save context first with \(settings.shortcutTriggerKey.saveReplyContextShortcut).")
             return
         }
 
-        let rewriteTargetLanguage = inferredRewriteTargetLanguage(from: selectedText)
+        let rewriteTargetLanguage = inferredRewriteTargetLanguage(from: sourceText)
         if let rewriteTargetLanguage {
             print("✏️ rewrite target lang:", rewriteTargetLanguage)
+        }
+        let replyMemories = AppSettings.shared.matchingReplyMemories(
+            for: sourceText,
+            instruction: instruction
+        )
+        if !replyMemories.isEmpty {
+            print("✏️ rewrite memory matches:", replyMemories.map(\.title).joined(separator: ", "))
         }
 
         do {
             let result = try await AIClient.shared.rewrite(
-                text: selectedText,
+                text: sourceText,
                 instruction: instruction,
-                targetLanguageOverride: rewriteTargetLanguage
+                targetLanguageOverride: rewriteTargetLanguage,
+                replyMemories: replyMemories,
+                draftReplyFromContext: usesQuickReplyContext,
+                modeOverride: rewriteMode
             )
             let rewritten = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !rewritten.isEmpty else {
@@ -612,7 +730,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             sendCmdV()
             try? await Task.sleep(nanoseconds: Constants.rewritePasteDelayNanos)
             restorePasteboardSnapshot(snapshot)
-            print("✏️ rewrite done | chars:", selectedText.count, "->", rewritten.count)
+            if usesQuickReplyContext {
+                quickReplyContextText = ""
+            }
+            print("✏️ rewrite done | chars:", sourceText.count, "->", rewritten.count, usesQuickReplyContext ? "(from saved context)" : "")
         } catch {
             restorePasteboardSnapshot(snapshot)
             presentRewriteError("Rewrite failed: \(error.localizedDescription)")

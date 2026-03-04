@@ -25,6 +25,10 @@ struct SettingsView: View {
     @State private var supabasePasswordInput: String = ""
     @State private var supabaseAuthStatus: String = ""
     @State private var supabaseAuthBusy: Bool = false
+    @State private var replyMemoryTitleInput: String = ""
+    @State private var replyMemoryTriggersInput: String = ""
+    @State private var replyMemorySourceInput: String = ""
+    @State private var replyMemoryGuidanceInput: String = ""
 
     var body: some View {
         ZStack {
@@ -183,9 +187,9 @@ struct SettingsView: View {
                                 .buttonStyle(StoreSecondaryButtonStyle())
                             }
 
-                            Text(supabaseStatusText)
-                                .font(.system(size: 12))
-                                .foregroundStyle(AppTheme.secondaryText)
+                        Text(supabaseStatusText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(AppTheme.secondaryText)
                         }
                     } label: {
                         Text("Account")
@@ -628,7 +632,7 @@ struct SettingsView: View {
                             .font(.system(size: 24, weight: .bold, design: .serif))
                             .foregroundStyle(AppTheme.primaryText)
 
-                        Text("Velg hovedtasten. Translate bruker + Shift, og rewrite bruker + Control.")
+                        Text("Velg hovedtasten. Translate bruker + Shift, rewrite bruker + Control, og lagre siste melding midlertidig med + <.")
                             .font(.system(size: 12))
                             .foregroundStyle(AppTheme.secondaryText)
                     }
@@ -651,6 +655,7 @@ struct SettingsView: View {
                     shortcutPreviewRow(title: "Dictate", shortcut: settings.shortcutTriggerKey.dictateShortcut)
                     shortcutPreviewRow(title: "Translate", shortcut: settings.shortcutTriggerKey.translateShortcut)
                     shortcutPreviewRow(title: "Rewrite", shortcut: settings.shortcutTriggerKey.rewriteShortcut)
+                    shortcutPreviewRow(title: "Save reply", shortcut: settings.shortcutTriggerKey.saveReplyContextShortcut)
                 }
                 .padding(14)
                 .background(
@@ -929,6 +934,26 @@ struct SettingsView: View {
         supabaseEmailInput = ""
         supabasePasswordInput = ""
         supabaseAuthStatus = "Local history and session removed from this Mac."
+    }
+
+    private var canAddReplyMemory: Bool {
+        !replyMemoryTitleInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !replyMemoryTriggersInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !replyMemoryGuidanceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func addReplyMemory() {
+        settings.addReplyMemory(
+            title: replyMemoryTitleInput,
+            triggerText: replyMemoryTriggersInput,
+            sourceText: replyMemorySourceInput,
+            guidance: replyMemoryGuidanceInput
+        )
+
+        replyMemoryTitleInput = ""
+        replyMemoryTriggersInput = ""
+        replyMemorySourceInput = ""
+        replyMemoryGuidanceInput = ""
     }
 
     private func startShortcutCapture() {
