@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import Combine
 import Speech
 import SwiftUI
 
@@ -497,6 +498,7 @@ struct SetupOnboardingView: View {
     private let microphoneSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
     private let accessibilitySettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     private let inputMonitoringSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
+    private let permissionRefreshTimer = Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -561,8 +563,10 @@ struct SetupOnboardingView: View {
                     }
 
                     HStack(spacing: 12) {
-                        Button(primaryActionTitle, action: primaryAction)
-                            .buttonStyle(OnboardingPrimaryButtonStyle())
+                        if showsPrimaryActionButton {
+                            Button(primaryActionTitle, action: primaryAction)
+                                .buttonStyle(OnboardingPrimaryButtonStyle())
+                        }
 
                         if showsContinueButton {
                             Button("Continue", action: continueAction)
@@ -585,6 +589,11 @@ struct SetupOnboardingView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissionState()
+        }
+        .onReceive(permissionRefreshTimer) { _ in
+            if step == .accessibility || step == .inputMonitoring {
+                refreshPermissionState()
+            }
         }
     }
 
@@ -618,18 +627,23 @@ struct SetupOnboardingView: View {
         switch step {
         case .speechRecognition:
             let status = SFSpeechRecognizer.authorizationStatus()
-            if speechGranted { return "Continue" }
             if status == .denied || status == .restricted { return "Open Speech Settings" }
             return "Allow speech recognition"
         case .microphone:
-            if microphoneGranted { return "Continue" }
             if AVCaptureDevice.authorizationStatus(for: .audio) == .denied { return "Open Microphone Settings" }
             return "Allow microphone"
         case .accessibility:
-            return accessibilityGranted ? "Continue" : "Open Accessibility Settings"
+            return "Open Accessibility Settings"
         case .inputMonitoring:
             return inputMonitoringGranted ? "Finish setup" : "Allow input monitoring"
         }
+    }
+
+    private var showsPrimaryActionButton: Bool {
+        if step == .inputMonitoring {
+            return true
+        }
+        return !currentStepGranted
     }
 
     private var showsContinueButton: Bool {
@@ -698,22 +712,22 @@ struct SetupOnboardingView: View {
             ) {
                 permissionStatePill(
                     step: .speechRecognition,
-                    label: "Speech recognition",
+                    label: "Speech",
                     granted: speechGranted
                 )
                 permissionStatePill(
                     step: .microphone,
-                    label: "Microphone",
+                    label: "Mic",
                     granted: microphoneGranted
                 )
                 permissionStatePill(
                     step: .accessibility,
-                    label: "Accessibility",
+                    label: "Access",
                     granted: accessibilityGranted
                 )
                 permissionStatePill(
                     step: .inputMonitoring,
-                    label: "Input monitoring",
+                    label: "Input",
                     granted: inputMonitoringGranted
                 )
             }
@@ -758,9 +772,8 @@ struct SetupOnboardingView: View {
                 .foregroundStyle(granted ? AppTheme.success : Color.white.opacity(0.5))
             Text(label)
                 .font(.system(size: 12, weight: .semibold))
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
             Spacer(minLength: 0)
         }
         .foregroundStyle(.white.opacity(0.82))
@@ -890,6 +903,19 @@ struct SetupOnboardingView: View {
             statusText = ""
             settings.completeSetupOnboarding()
             return
+        }
+
+        if currentStepGranted {
+            switch step {
+            case .speechRecognition:
+                statusText = "Speech recognition is ready. Press Continue when you want to move on."
+            case .microphone:
+                statusText = "Microphone access is ready. Press Continue when you want to move on."
+            case .accessibility:
+                statusText = "Accessibility is ready. Press Continue when you want to move on."
+            case .inputMonitoring:
+                statusText = "Input Monitoring is ready. Press Finish setup to continue."
+            }
         }
 
         let incompleteStep = firstIncompleteStep
