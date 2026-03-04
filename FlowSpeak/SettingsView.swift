@@ -115,6 +115,44 @@ struct SettingsView: View {
                                 )
                             }
 
+                            settingRow(title: "Email replies") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Picker("Tiltale", selection: $settings.emailReplyGreetingMode) {
+                                        ForEach(EmailReplyGreetingMode.allCases) { option in
+                                            Text(option.label).tag(option)
+                                        }
+                                    }
+                                    .storePicker(maxWidth: 260)
+
+                                    Picker("Avslutning", selection: $settings.emailReplySignoffMode) {
+                                        ForEach(EmailReplySignoffMode.allCases) { option in
+                                            Text(option.label).tag(option)
+                                        }
+                                    }
+                                    .storePicker(maxWidth: 260)
+
+                                    if settings.emailReplySignoffMode == .custom {
+                                        TextField("Lim inn signaturen du vil bruke i e-postsvar", text: $settings.emailReplyCustomSignature, axis: .vertical)
+                                            .textFieldStyle(.plain)
+                                            .storeField(maxWidth: 520)
+                                    } else if settings.emailReplySignoffMode == .autoName {
+                                        Text(settings.resolvedEmailReplySignoffText)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(AppTheme.secondaryText)
+                                            .padding(10)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .fill(AppTheme.surfaceMuted)
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 10)
+                                                            .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                                                    )
+                                            )
+                                    }
+                                }
+                            }
+
                             settingRow(title: "Backend URL") {
                                 TextField(AppSettings.defaultBackendBaseURL, text: $settings.backendBaseURL)
                                     .textFieldStyle(.plain)

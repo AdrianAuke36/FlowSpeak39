@@ -13,6 +13,7 @@ struct FieldContext {
     let axPlaceholder: String?
     let axValuePreview: String?  // Opptil 500 tegn bakover
     let browserURL: String?
+    let emailRecipientHint: String?
 }
 
 enum DraftMode: String {
@@ -62,6 +63,9 @@ final class ContextResolver {
         let valuePreview = focused.flatMap { copyValuePreview($0, maxLength: 500) }
 
         let browserURL = isBrowser(bundleId: bundleId) ? fetchBrowserURL(bundleId: bundleId) : nil
+        let emailRecipientHint = focused.flatMap {
+            inferEmailRecipientHint(from: $0, bundleId: bundleId, browserURL: browserURL)
+        }
 
         return FieldContext(
             bundleId: bundleId,
@@ -73,7 +77,8 @@ final class ContextResolver {
             axTitle: title,
             axPlaceholder: placeholder,
             axValuePreview: valuePreview,
-            browserURL: browserURL
+            browserURL: browserURL,
+            emailRecipientHint: emailRecipientHint
         )
     }
 
@@ -274,6 +279,136 @@ final class ContextResolver {
         hints.contains { text.contains($0) }
     }
 
+    private func inferEmailRecipientHint(from focused: AXUIElement, bundleId: String, browserURL: String?) -> String? {
+        guard likelyEmailCompose(bundleId: bundleId, browserURL: browserURL, focused: focused) else {
+            return nil
+        }
+        guard let root = rootWindow(for: focused) else { return nil }
+
+        var remainingNodes = 180
+        var strings: [String] = []
+        collectVisibleStrings(in: root, remainingNodes: &remainingNodes, into: &strings)
+
+        var bestCandidate: (text: String, score: Int)?
+        for raw in strings {
+            let candidate = cleanedRecipientCandidate(from: raw)
+            let score = recipientCandidateScore(candidate)
+            guard score > 0 else { continue }
+            if let current = bestCandidate, current.score >= score {
+                continue
+            }
+            bestCandidate = (candidate, score)
+        }
+
+        return bestCandidate?.text
+    }
+
+    private func likelyEmailCompose(bundleId: String, browserURL: String?, focused: AXUIElement) -> Bool {
+        if bundleId == "com.apple.mail" || bundleId == "com.microsoft.Outlook" {
+            return true
+        }
+        if let url = browserURL?.lowercased(),
+           url.contains("mail.google.com") || url.contains("outlook.live.com") || url.contains("outlook.office.com") {
+            return true
+        }
+
+        let title = copyStringAttr(focused, kAXTitleAttribute)
+        let desc = copyStringAttr(focused, kAXDescriptionAttribute)
+        let help = copyStringAttr(focused, kAXHelpAttribute)
+        let placeholder = copyStringAttr(focused, kAXPlaceholderValueAttribute)
+        let blob = normalize([title, desc, help, placeholder])
+        return containsAny(blob, from: Heuristics.emailHints)
+    }
+
+    private func rootWindow(for element: AXUIElement) -> AXUIElement? {
+        if let window = copyElementAttr(element, kAXWindowAttribute) {
+            return window
+        }
+
+        var current: AXUIElement? = element
+        var depth = 0
+        while let node = current, depth < 16 {
+            let role = copyStringAttr(node, kAXRoleAttribute) ?? ""
+            if role == "AXWindow" || role == "AXSheet" {
+                return node
+            }
+            current = copyElementAttr(node, kAXParentAttribute)
+            depth += 1
+        }
+        return current
+    }
+
+    private func collectVisibleStrings(in element: AXUIElement, remainingNodes: inout Int, into results: inout [String]) {
+        guard remainingNodes > 0 else { return }
+        remainingNodes -= 1
+
+        let role = copyStringAttr(element, kAXRoleAttribute) ?? ""
+        let isInterestingRole = role == "AXStaticText" || role == "AXButton" || role == "AXTextField"
+        if isInterestingRole {
+            for value in [copyStringAttr(element, kAXTitleAttribute), copyStringAttr(element, kAXValueAttribute)] {
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !trimmed.isEmpty && trimmed.count <= 120 && !trimmed.contains("\n") {
+                    results.append(trimmed)
+                }
+            }
+        }
+
+        var childrenRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+              let children = childrenRef as? [AXUIElement] else { return }
+
+        for child in children {
+            collectVisibleStrings(in: child, remainingNodes: &remainingNodes, into: &results)
+            if remainingNodes <= 0 { break }
+        }
+    }
+
+    private func cleanedRecipientCandidate(from raw: String) -> String {
+        let trimmed = raw.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let angleStart = trimmed.firstIndex(of: "<"), angleStart > trimmed.startIndex {
+            return trimmed[..<angleStart]
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"' ").union(.whitespacesAndNewlines))
+        }
+        return trimmed
+    }
+
+    private func recipientCandidateScore(_ candidate: String) -> Int {
+        guard !candidate.isEmpty, candidate.count <= 60 else { return 0 }
+        let lower = candidate.lowercased()
+        let blockedTerms = [
+            "send", "sende", "subject", "emne", "mottaker", "recipient", "compose", "ny melding",
+            "new message", "sans serif", "flow", "flowspeak", "settings", "home", "continue",
+            "til", "cc", "bcc", "inbox", "innboks"
+        ]
+        if blockedTerms.contains(where: { lower == $0 || lower.contains($0) }) {
+            return 0
+        }
+        if candidate.rangeOfCharacter(from: .decimalDigits) != nil {
+            return 0
+        }
+
+        let words = candidate.split(separator: " ").map(String.init)
+        guard !words.isEmpty, words.count <= 4 else { return 0 }
+
+        let lettersOnly = CharacterSet.letters.union(CharacterSet(charactersIn: "-'"))
+        guard words.allSatisfy({ !$0.isEmpty && $0.unicodeScalars.allSatisfy(lettersOnly.contains) }) else {
+            return 0
+        }
+
+        let capitalizedWords = words.filter { word in
+            guard let first = word.unicodeScalars.first else { return false }
+            return CharacterSet.uppercaseLetters.contains(first)
+        }.count
+
+        switch capitalizedWords {
+        case 2...4: return 4
+        case 1: return words.count == 1 ? 2 : 3
+        default: return 0
+        }
+    }
+
     // MARK: - Accessibility helpers
 
     private func focusedElement() -> AXUIElement? {
@@ -289,6 +424,13 @@ final class ContextResolver {
         let err = AXUIElementCopyAttributeValue(el, attr as CFString, &value)
         guard err == .success else { return nil }
         return value as? String
+    }
+
+    private func copyElementAttr(_ el: AXUIElement, _ attr: String) -> AXUIElement? {
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(el, attr as CFString, &value)
+        guard err == .success, let element = value else { return nil }
+        return (element as! AXUIElement)
     }
 
     // NY: konfigurerbar maxLength

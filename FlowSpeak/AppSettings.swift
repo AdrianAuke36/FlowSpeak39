@@ -193,6 +193,36 @@ enum ShortcutTriggerKey: String, CaseIterable, Identifiable {
     }
 }
 
+enum EmailReplySignoffMode: String, CaseIterable, Identifiable {
+    case none
+    case autoName
+    case custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .none: return "Ingen"
+        case .autoName: return "Auto (Mvh + navn)"
+        case .custom: return "Egen signatur"
+        }
+    }
+}
+
+enum EmailReplyGreetingMode: String, CaseIterable, Identifiable {
+    case firstName
+    case fullName
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .firstName: return "Hei + fornavn"
+        case .fullName: return "Hei + fullt navn"
+        }
+    }
+}
+
 struct ReplyMemoryRule: Identifiable, Codable, Hashable {
     let id: String
     var title: String
@@ -320,6 +350,9 @@ final class AppSettings: ObservableObject {
         static let supabaseSessionExpiresAt = "supabaseSessionExpiresAt"
         static let supabaseRefreshToken = "supabaseRefreshToken"
         static let hasCompletedSetupOnboarding = "hasCompletedSetupOnboarding"
+        static let emailReplyGreetingMode = "emailReplyGreetingMode"
+        static let emailReplySignoffMode = "emailReplySignoffMode"
+        static let emailReplyCustomSignature = "emailReplyCustomSignature"
         static let replyMemories = "replyMemories"
         static let overrides = "overrides"
     }
@@ -466,6 +499,29 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(hasCompletedSetupOnboarding, forKey: StorageKey.hasCompletedSetupOnboarding) }
     }
 
+    @Published var emailReplyGreetingMode: EmailReplyGreetingMode {
+        didSet { UserDefaults.standard.set(emailReplyGreetingMode.rawValue, forKey: StorageKey.emailReplyGreetingMode) }
+    }
+
+    @Published var emailReplySignoffMode: EmailReplySignoffMode {
+        didSet { UserDefaults.standard.set(emailReplySignoffMode.rawValue, forKey: StorageKey.emailReplySignoffMode) }
+    }
+
+    @Published var emailReplyCustomSignature: String {
+        didSet {
+            let normalized = emailReplyCustomSignature.trimmingCharacters(in: .whitespacesAndNewlines)
+            if emailReplyCustomSignature != normalized {
+                emailReplyCustomSignature = normalized
+                return
+            }
+            if normalized.isEmpty {
+                UserDefaults.standard.removeObject(forKey: StorageKey.emailReplyCustomSignature)
+            } else {
+                UserDefaults.standard.set(normalized, forKey: StorageKey.emailReplyCustomSignature)
+            }
+        }
+    }
+
     @Published var replyMemories: [ReplyMemoryRule] {
         didSet { saveReplyMemories() }
     }
@@ -547,6 +603,12 @@ final class AppSettings: ObservableObject {
         } else {
             self.hasCompletedSetupOnboarding = UserDefaults.standard.bool(forKey: StorageKey.hasCompletedSetupOnboarding)
         }
+        let rawEmailReplyGreetingMode = UserDefaults.standard.string(forKey: StorageKey.emailReplyGreetingMode) ?? EmailReplyGreetingMode.firstName.rawValue
+        self.emailReplyGreetingMode = EmailReplyGreetingMode(rawValue: rawEmailReplyGreetingMode) ?? .firstName
+        let rawEmailReplySignoffMode = UserDefaults.standard.string(forKey: StorageKey.emailReplySignoffMode) ?? EmailReplySignoffMode.autoName.rawValue
+        self.emailReplySignoffMode = EmailReplySignoffMode(rawValue: rawEmailReplySignoffMode) ?? .autoName
+        self.emailReplyCustomSignature = UserDefaults.standard.string(forKey: StorageKey.emailReplyCustomSignature)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if let data = UserDefaults.standard.data(forKey: StorageKey.replyMemories),
            let rules = try? JSONDecoder().decode([ReplyMemoryRule].self, from: data) {
             self.replyMemories = rules
@@ -728,6 +790,19 @@ final class AppSettings: ObservableObject {
                 return String(first).uppercased() + word.dropFirst()
             }
             .joined(separator: " ")
+    }
+
+    var resolvedEmailReplySignoffText: String {
+        switch emailReplySignoffMode {
+        case .none:
+            return ""
+        case .autoName:
+            let name = greetingDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return "Mvh" }
+            return "Mvh,\n\(name)"
+        case .custom:
+            return emailReplyCustomSignature.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
 
     var shortcutInstructionText: String {

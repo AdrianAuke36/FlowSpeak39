@@ -160,7 +160,8 @@ final class AIClient {
         targetLanguageOverride: String? = nil,
         replyMemories: [ReplyMemoryRule] = [],
         draftReplyFromContext: Bool = false,
-        modeOverride: DraftMode? = nil
+        modeOverride: DraftMode? = nil,
+        emailRecipientHint: String? = nil
     ) async throws -> RewriteResponse {
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanText.isEmpty { throw AIClientError.emptyResponse }
@@ -187,10 +188,17 @@ final class AIClient {
             "text": cleanText,
             "instruction": cleanInstruction,
             "targetLanguage": effectiveTargetLanguage,
-            "style": style.rawValue
+            "style": style.rawValue,
+            "emailReplyGreetingMode": AppSettings.shared.emailReplyGreetingMode.rawValue,
+            "emailReplySignoffMode": AppSettings.shared.emailReplySignoffMode.rawValue,
+            "emailReplySignoffText": AppSettings.shared.resolvedEmailReplySignoffText
         ]
         if let modeOverride {
             body["mode"] = modeOverride.rawValue
+        }
+        let trimmedRecipientHint = emailRecipientHint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedRecipientHint.isEmpty {
+            body["emailRecipientHint"] = trimmedRecipientHint
         }
         if !replyMemories.isEmpty {
             body["replyMemories"] = replyMemories.map {

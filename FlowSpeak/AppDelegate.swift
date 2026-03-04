@@ -691,6 +691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let (snapshot, copiedSelection) = await readSelectedTextFromFocusedApp()
         let usesQuickReplyContext = copiedSelection.isEmpty && !quickReplyContextText.isEmpty
         let sourceText = usesQuickReplyContext ? quickReplyContextText : copiedSelection
+        let emailRecipientHint = usesQuickReplyContext ? rewriteFieldContext?.emailRecipientHint : nil
 
         guard !sourceText.isEmpty else {
             restorePasteboardSnapshot(snapshot)
@@ -717,7 +718,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 targetLanguageOverride: rewriteTargetLanguage,
                 replyMemories: replyMemories,
                 draftReplyFromContext: usesQuickReplyContext,
-                modeOverride: rewriteMode
+                modeOverride: rewriteMode,
+                emailRecipientHint: emailRecipientHint
             )
             let rewritten = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !rewritten.isEmpty else {

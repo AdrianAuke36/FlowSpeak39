@@ -2344,6 +2344,92 @@ function classifyDraftReplyContext(text) {
   };
 }
 
+function normalizeEmailReplySignoffMode(value) {
+  const normalized = String(value || "").trim();
+  if (normalized === "none" || normalized === "custom" || normalized === "autoName") {
+    return normalized;
+  }
+  return "autoName";
+}
+
+function normalizeEmailReplyGreetingMode(value) {
+  const normalized = String(value || "").trim();
+  if (normalized === "firstName" || normalized === "fullName") {
+    return normalized;
+  }
+  return "firstName";
+}
+
+function looksLikeEmailDisplayName(value) {
+  const cleaned = String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+  if (!cleaned || cleaned.length > 60 || /\d/.test(cleaned)) {
+    return false;
+  }
+
+  const lower = cleaned.toLowerCase();
+  const blockedTerms = [
+    "send", "sende", "subject", "emne", "recipient", "mottaker", "compose",
+    "new message", "ny melding", "inbox", "innboks", "cc", "bcc", "to",
+    "til", "sans serif", "flowspeak"
+  ];
+  if (blockedTerms.some((term) => lower === term || lower.includes(term))) {
+    return false;
+  }
+
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (!parts.length || parts.length > 4) {
+    return false;
+  }
+
+  const namePartPattern = /^[\p{L}'-]+$/u;
+  const capitalizedParts = parts.filter((part) => namePartPattern.test(part) && /^[\p{Lu}]/u.test(part)).length;
+  return capitalizedParts >= 1;
+}
+
+function extractEmailReplyMetadata(text) {
+  const raw = String(text || "");
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const headerLines = lines.slice(0, 10);
+
+  let senderDisplayName = "";
+  for (const line of headerLines) {
+    const directMatch = line.match(/^"?([^"<]{2,120}?)"?\s*<[^>]+>$/);
+    if (directMatch?.[1]) {
+      senderDisplayName = directMatch[1].trim();
+      break;
+    }
+
+    const prefixedMatch = line.match(/^(?:from|fra):\s*"?([^"<]{2,120}?)"?\s*(?:<[^>]+>)?$/i);
+    if (prefixedMatch?.[1]) {
+      senderDisplayName = prefixedMatch[1].trim();
+      break;
+    }
+
+    if (!senderDisplayName && looksLikeEmailDisplayName(line)) {
+      senderDisplayName = line;
+      break;
+    }
+  }
+
+  const cleanedDisplayName = senderDisplayName
+    .replace(/\s+/g, " ")
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+  const nameParts = cleanedDisplayName.split(/\s+/).filter(Boolean);
+  const greetingName = nameParts.length ? nameParts[0] : "";
+
+  return {
+    senderDisplayName: cleanedDisplayName,
+    greetingName
+  };
+}
+
 function normalizeDraftReplyInstruction(instruction) {
   const trimmed = String(instruction || "").replace(/\s+/g, " ").trim();
   if (!trimmed) return trimmed;
@@ -2606,6 +2692,10 @@ async function handleRewrite(body, requestSignal) {
   let draftReplyFromContext = false;
   let replyMemories = [];
   let requestedRewriteMode = "generic";
+  let emailReplyGreetingMode = "firstName";
+  let emailReplySignoffMode = "autoName";
+  let emailReplySignoffText = "";
+  let emailRecipientHint = "";
 
   try {
     if (requestSignal?.aborted) {
@@ -2629,6 +2719,10 @@ async function handleRewrite(body, requestSignal) {
     draftReplyFromContext = body?.draftReplyFromContext === true;
     replyMemories = normalizeReplyMemories(body?.replyMemories);
     requestedRewriteMode = String(body?.mode || "generic").trim().toLowerCase();
+    emailReplyGreetingMode = normalizeEmailReplyGreetingMode(body?.emailReplyGreetingMode);
+    emailReplySignoffMode = normalizeEmailReplySignoffMode(body?.emailReplySignoffMode);
+    emailReplySignoffText = String(body?.emailReplySignoffText || "").trim();
+    emailRecipientHint = String(body?.emailRecipientHint || "").trim();
     const dictionary = getRequestDictionary(body);
     correctedInput = applyDictionaryReplacements(applySelfCorrections(text), dictionary);
     if (draftReplyFromContext) {
@@ -2654,8 +2748,38 @@ async function handleRewrite(body, requestSignal) {
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
       : "";
     const isEmailReplyMode = requestedRewriteMode === "email_body" || requestedRewriteMode === "email_subject";
+    const baseEmailReplyMeta = (draftReplyFromContext || isEmailReplyMode)
+      ? extractEmailReplyMetadata(correctedInput)
+      : { senderDisplayName: "", greetingName: "" };
+    const fallbackEmailReplyMeta = emailRecipientHint
+      ? extractEmailReplyMetadata(emailRecipientHint)
+      : { senderDisplayName: "", greetingName: "" };
+    const emailReplyMeta = baseEmailReplyMeta.greetingName
+      ? baseEmailReplyMeta
+      : fallbackEmailReplyMeta.greetingName
+        ? fallbackEmailReplyMeta
+        : baseEmailReplyMeta;
+    const preferredGreetingName = emailReplyGreetingMode === "fullName"
+      ? (emailReplyMeta.senderDisplayName || emailReplyMeta.greetingName)
+      : emailReplyMeta.greetingName;
+    const greetingRule = isEmailReplyMode && preferredGreetingName
+      ? `Start the email with a natural direct greeting to the sender: "Hei ${preferredGreetingName}," unless the user explicitly asks for another style.`
+      : isEmailReplyMode
+        ? "Start the email with a natural greeting when appropriate."
+        : "";
+    const signoffRule = isEmailReplyMode
+      ? (() => {
+          if (emailReplySignoffMode === "none") {
+            return "Do not add a closing sign-off unless the user explicitly asks for one.";
+          }
+          if (emailReplySignoffText) {
+            return `End the email with this exact sign-off block, preserving line breaks:\n${emailReplySignoffText}`;
+          }
+          return "End the email with a short, natural sign-off only if it clearly improves the reply.";
+        })()
+      : "";
     const taskRule = draftReplyFromContext
-      ? `Draft a complete send-ready reply to the provided incoming message context. The provided text is the message being answered, not the draft to rewrite. Use the incoming message plus the spoken instruction to write the full response the user should send. ${replyContextProfile?.extraRule || ""} ${isEmailReplyMode ? "The user is writing inside an email field, so format the output as an actual email reply body, not a chat reply. Use a natural greeting when appropriate and write a complete email-ready response." : ""} Be polite, context-aware, and useful. Do not simply restate the spoken instruction, and do not return only a short fragment.`
+      ? `Draft a complete send-ready reply to the provided incoming message context. The provided text is the message being answered, not the draft to rewrite. Use the incoming message plus the spoken instruction to write the full response the user should send. ${replyContextProfile?.extraRule || ""} ${isEmailReplyMode ? `The user is writing inside an email field, so format the output as an actual email reply body, not a chat reply. ${greetingRule} ${signoffRule}` : ""} Be polite, context-aware, and useful. Do not simply restate the spoken instruction, and do not return only a short fragment.`
       : "Apply the user instruction to the provided text.";
     const rewriteMaxTokens = draftReplyFromContext
       ? Math.max(OPENAI_MAX_TOKENS_REWRITE, replyContextProfile?.minTokens || 220)
