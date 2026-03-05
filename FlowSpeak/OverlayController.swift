@@ -13,9 +13,9 @@ final class OverlayController {
         static let panelSize = NSSize(width: 132, height: 56)
         static let panelBottomOffset: CGFloat = 32
         static let hideDelay: TimeInterval = 0.25
-        static let saveToastSize = NSSize(width: 188, height: 62)
+        static let saveToastSize = NSSize(width: 72, height: 72)
         static let saveToastBottomOffset: CGFloat = 34
-        static let saveToastDuration: TimeInterval = 2.7
+        static let saveToastDuration: TimeInterval = 2.3
     }
 
     private var panel: NSPanel?

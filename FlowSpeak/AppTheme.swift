@@ -1,19 +1,40 @@
+import AppKit
 import SwiftUI
 
 enum AppTheme {
-    static let canvas = Color(red: 0.96, green: 0.97, blue: 0.99)
-    static let sidebar = Color(red: 0.94, green: 0.96, blue: 0.99)
-    static let surface = Color.white
-    static let surfaceMuted = Color(red: 0.98, green: 0.99, blue: 1.00)
-    static let border = Color(red: 0.86, green: 0.89, blue: 0.94)
-    static let fieldBorder = Color(red: 0.78, green: 0.81, blue: 0.86)
-    static let primaryText = Color(red: 0.11, green: 0.14, blue: 0.19)
-    static let secondaryText = Color(red: 0.42, green: 0.47, blue: 0.56)
-    static let accent = Color(red: 0.08, green: 0.47, blue: 0.96)
-    static let accentSoft = Color(red: 0.90, green: 0.95, blue: 1.00)
-    static let success = Color(red: 0.12, green: 0.63, blue: 0.34)
-    static let warning = Color(red: 0.73, green: 0.43, blue: 0.10)
-    static let shadow = Color.black.opacity(0.06)
+    // Obsidian theme: neutral monochrome palette for maximum focus.
+    static let canvas = dynamic(light: rgb(242, 242, 240), dark: rgb(12, 12, 12))
+    static let sidebar = dynamic(light: rgb(235, 235, 233), dark: rgb(18, 18, 18))
+    static let surface = dynamic(light: rgb(250, 250, 250), dark: rgb(22, 22, 22))
+    static let surfaceMuted = dynamic(light: rgb(244, 244, 242), dark: rgb(28, 28, 28))
+    static let border = dynamic(light: rgb(214, 214, 212), dark: rgb(48, 48, 48))
+    static let fieldBorder = dynamic(light: rgb(192, 192, 190), dark: rgb(66, 66, 66))
+    static let primaryText = dynamic(light: rgb(17, 17, 17), dark: rgb(245, 245, 245))
+    static let secondaryText = dynamic(light: rgb(94, 94, 94), dark: rgb(176, 176, 176))
+    static let accent = dynamic(light: rgb(17, 17, 17), dark: rgb(245, 245, 245))
+    static let accentText = dynamic(light: rgb(245, 245, 245), dark: rgb(17, 17, 17))
+    static let accentSoft = dynamic(light: rgb(229, 229, 227), dark: rgb(34, 34, 34))
+    static let success = dynamic(light: rgb(17, 17, 17), dark: rgb(245, 245, 245))
+    static let warning = dynamic(light: rgb(70, 70, 70), dark: rgb(198, 198, 198))
+    static let shadow = dynamic(light: rgb(0, 0, 0, alpha: 0.08), dark: rgb(0, 0, 0, alpha: 0.4))
+
+    private static func dynamic(light: NSColor, dark: NSColor) -> Color {
+        Color(
+            nsColor: NSColor(name: nil) { appearance in
+                let match = appearance.bestMatch(from: [.darkAqua, .aqua])
+                return match == .darkAqua ? dark : light
+            }
+        )
+    }
+
+    private static func rgb(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat, alpha: CGFloat = 1.0) -> NSColor {
+        NSColor(
+            calibratedRed: red / 255.0,
+            green: green / 255.0,
+            blue: blue / 255.0,
+            alpha: alpha
+        )
+    }
 }
 
 private struct AppCardModifier: ViewModifier {
@@ -52,7 +73,6 @@ private struct StoreFieldModifier: ViewModifier {
                             .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
                     )
             )
-            .environment(\.colorScheme, .light)
     }
 }
 
@@ -76,7 +96,6 @@ private struct StorePickerModifier: ViewModifier {
                             .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
                     )
             )
-            .environment(\.colorScheme, .light)
     }
 }
 
@@ -105,7 +124,7 @@ struct StorePrimaryButtonStyle: ButtonStyle {
                     .fill(isEnabled ? AppTheme.accent : AppTheme.border)
                     .shadow(color: AppTheme.shadow, radius: 8, x: 0, y: 4)
             )
-            .foregroundStyle(.white)
+            .foregroundStyle(AppTheme.accentText)
             .opacity(configuration.isPressed ? 0.92 : 1)
             .scaleEffect(configuration.isPressed ? 0.99 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)

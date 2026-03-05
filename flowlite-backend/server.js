@@ -2449,6 +2449,13 @@ function normalizeDraftReplyInstruction(instruction) {
     return trimmed;
   }
 
+  // Very short instructions (for example: "snart", "nei", "ja", "kan ikke") should be
+  // treated as strict intent points, not as room for model elaboration.
+  const shortWordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  if (shortWordCount <= 3 && trimmed.length <= 40) {
+    return `Write a complete polite reply that communicates only this exact point and does not add extra facts: ${trimmed}`;
+  }
+
   const standaloneMessagePoint = /\b(i\b|i'm|im\b|i’ve|i've|my\b|mine\b|jeg\b|min\b|mitt\b|har ikke|have not|haven't|did not|didn't|kan ikke|cannot|can't|won't|vil ikke|ikke fått|not received|still waiting|fortsatt ikke)\b/i.test(trimmed);
   if (standaloneMessagePoint) {
     return `Write a complete polite reply that clearly communicates this point: ${trimmed}`;
@@ -2742,7 +2749,14 @@ async function handleRewrite(body, requestSignal) {
         : `Output language must stay ${lang}. Keep the same language as the original text. Do not translate into any other language unless the instruction explicitly requests translation.`;
     const styleRule = STYLE_RULES[style] || STYLE_RULES.clean;
     const dictionaryRule = buildDictionaryPromptClause(dictionary);
-    const safetyRule = "Keep names, dates, numbers, and factual content unless the instruction explicitly requests changing them.";
+    const baseSafetyRule = "Keep names, dates, numbers, and factual content unless the instruction explicitly requests changing them.";
+    const noAssumptionRule = draftReplyFromContext
+      ? "Use only facts explicitly present in the incoming message context or spoken instruction. Do not invent status updates, percentages, timelines, confirmations, attachments, progress estimates, future plans, or expectations."
+      : "";
+    const instructionWordCount = String(instruction || "").trim().split(/\s+/).filter(Boolean).length;
+    const concisePointRule = draftReplyFromContext && instructionWordCount <= 3
+      ? "The spoken instruction is very brief. Keep the reply concise and express only that point without elaboration."
+      : "";
     const singleDraftRule = "Return exactly one final draft only. Never include alternatives, notes, prefixes, or placeholders.";
     const memoryRule = replyMemories.length
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
@@ -2784,7 +2798,7 @@ async function handleRewrite(body, requestSignal) {
     const rewriteMaxTokens = draftReplyFromContext
       ? Math.max(OPENAI_MAX_TOKENS_REWRITE, replyContextProfile?.minTokens || 220)
       : OPENAI_MAX_TOKENS_REWRITE;
-    const system = `${taskRule} ${styleRule} ${langRule} ${safetyRule} ${singleDraftRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
+    const system = `${taskRule} ${styleRule} ${langRule} ${baseSafetyRule} ${noAssumptionRule} ${concisePointRule} ${singleDraftRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
     const memorySection = replyMemories.length
       ? `\n\nRelevant reply memories:\n${replyMemories.map((memory) => {
         const triggerPart = memory.triggers ? ` (triggers: ${memory.triggers})` : "";

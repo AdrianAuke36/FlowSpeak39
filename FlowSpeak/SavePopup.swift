@@ -1,120 +1,20 @@
 import SwiftUI
 
-struct SaveToastPanelView: View {
-    @State private var circleScale: CGFloat = 0
-    @State private var circleOpacity: Double = 0
-    @State private var checkProgress: CGFloat = 0
-    @State private var pillOffset: CGFloat = 14
-    @State private var pillOpacity: Double = 0
-    @State private var glowOpacity: Double = 0.4
+// MARK: - Usage
+//
+// @State private var showSaved = false
+//
+// ZStack {
+//     ContentView()
+//     SaveCheckmark(isVisible: $showSaved)
+// }
+//
+// // Trigger:
+// showSaved = true
 
-    private let green = Color(red: 0.20, green: 0.78, blue: 0.35)
+// MARK: - Checkmark shape
 
-    var body: some View {
-        ZStack {
-            Capsule()
-                .stroke(green.opacity(glowOpacity), lineWidth: 1)
-                .blur(radius: 6)
-                .padding(-4)
-                .allowsHitTesting(false)
-
-            HStack(spacing: 12) {
-                CheckCircleView(
-                    green: green,
-                    circleScale: circleScale,
-                    circleOpacity: circleOpacity,
-                    checkProgress: checkProgress
-                )
-
-                Text("Tekst lagret")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.92))
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, 20)
-            .padding(.vertical, 12)
-            .background(
-                Capsule()
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        .white.opacity(0.22),
-                                        green.opacity(0.25),
-                                        .white.opacity(0.05)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
-                    .shadow(color: green.opacity(0.15), radius: 10, x: 0, y: 0)
-            )
-        }
-        .offset(y: pillOffset)
-        .opacity(pillOpacity)
-        .allowsHitTesting(false)
-        .onAppear {
-            showPopup()
-        }
-    }
-
-    private func showPopup() {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
-            pillOffset = 0
-            pillOpacity = 1
-        }
-
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.65).delay(0.05)) {
-            circleScale = 1
-            circleOpacity = 1
-        }
-
-        withAnimation(.easeOut(duration: 0.28).delay(0.22)) {
-            checkProgress = 1
-        }
-
-        withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
-            glowOpacity = 0.75
-        }
-    }
-}
-
-private struct CheckCircleView: View {
-    let green: Color
-    let circleScale: CGFloat
-    let circleOpacity: Double
-    let checkProgress: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(green.opacity(0.15))
-                .overlay(
-                    Circle()
-                        .strokeBorder(green.opacity(0.5), lineWidth: 1.5)
-                )
-                .shadow(color: green.opacity(0.25), radius: 6, x: 0, y: 0)
-                .scaleEffect(circleScale)
-                .opacity(circleOpacity)
-
-            CheckmarkShape(progress: checkProgress)
-                .trim(from: 0, to: checkProgress)
-                .stroke(
-                    green,
-                    style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round)
-                )
-                .frame(width: 14, height: 14)
-        }
-        .frame(width: 34, height: 34)
-    }
-}
-
-private struct CheckmarkShape: Shape {
+struct CheckmarkPath: Shape {
     var progress: CGFloat
 
     var animatableData: CGFloat {
@@ -124,11 +24,135 @@ private struct CheckmarkShape: Shape {
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let width = rect.width
-        let height = rect.height
-        path.move(to: CGPoint(x: width * 0.18, y: height * 0.52))
-        path.addLine(to: CGPoint(x: width * 0.42, y: height * 0.76))
-        path.addLine(to: CGPoint(x: width * 0.82, y: height * 0.28))
+        let w = rect.width
+        let h = rect.height
+        path.move(to: CGPoint(x: w * 0.18, y: h * 0.54))
+        path.addLine(to: CGPoint(x: w * 0.42, y: h * 0.76))
+        path.addLine(to: CGPoint(x: w * 0.82, y: h * 0.28))
         return path
     }
+}
+
+// MARK: - Popup view
+
+struct SaveCheckmark: View {
+    @Binding var isVisible: Bool
+
+    @State private var circleScale: CGFloat = 0
+    @State private var checkProgress: CGFloat = 0
+    @State private var opacity: Double = 0
+    @State private var offsetY: CGFloat = 6
+
+    private let green = Color(red: 0.20, green: 0.78, blue: 0.35)
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+            ZStack {
+                // Circle
+                Circle()
+                    .fill(green.opacity(0.15))
+                    .overlay(
+                        Circle()
+                            .strokeBorder(green.opacity(0.35), lineWidth: 1)
+                    )
+                    .shadow(color: green.opacity(0.15), radius: 8, x: 0, y: 0)
+                    .shadow(color: .black.opacity(0.2), radius: 6, x: 0, y: 2)
+                    .scaleEffect(circleScale)
+
+                // Checkmark
+                CheckmarkPath(progress: checkProgress)
+                    .trim(from: 0, to: checkProgress)
+                    .stroke(
+                        green,
+                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round)
+                    )
+                    .frame(width: 14, height: 14)
+            }
+            .frame(width: 36, height: 36)
+            .opacity(opacity)
+            .offset(y: offsetY)
+            .padding(.bottom, 36)
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            if isVisible {
+                show()
+            }
+        }
+        .onChange(of: isVisible) { _, newValue in
+            if newValue { show() }
+        }
+    }
+
+    private func show() {
+        // Reset
+        circleScale = 0
+        checkProgress = 0
+        opacity = 0
+        offsetY = 6
+
+        // Pop in
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+            opacity = 1
+            offsetY = 0
+            circleScale = 1
+        }
+
+        // Draw check
+        withAnimation(.easeOut(duration: 0.24).delay(0.12)) {
+            checkProgress = 1
+        }
+
+        // Auto hide
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.easeIn(duration: 0.18)) {
+                opacity = 0
+                offsetY = 4
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                isVisible = false
+                circleScale = 0
+                checkProgress = 0
+            }
+        }
+    }
+}
+
+struct SaveToastPanelView: View {
+    @State private var isVisible = true
+
+    var body: some View {
+        SaveCheckmark(isVisible: $isVisible)
+            .onAppear {
+                isVisible = true
+            }
+    }
+}
+
+// MARK: - Preview
+
+#Preview {
+    struct PreviewWrapper: View {
+        @State private var show = false
+
+        var body: some View {
+            ZStack {
+                Color(red: 0.05, green: 0.05, blue: 0.08).ignoresSafeArea()
+
+                Button("Lagre") { show = true }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .font(.system(size: 13, weight: .medium))
+
+                SaveCheckmark(isVisible: $show)
+            }
+        }
+    }
+    return PreviewWrapper()
 }

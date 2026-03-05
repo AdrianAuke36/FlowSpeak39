@@ -10,11 +10,26 @@ import Carbon.HIToolbox
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum SettingsDisplayMode: String, CaseIterable, Identifiable {
+    case simple
+    case advanced
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .simple: return "Simple"
+        case .advanced: return "Advanced"
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var history = DictationHistory.shared
     @ObservedObject private var appLog = AppLogStore.shared
 
+    @State private var displayMode: SettingsDisplayMode = .simple
     @State private var showsAdvancedAuthSettings: Bool = false
     @State private var showsShortcutSettings: Bool = false
     @State private var isCapturingShortcut: Bool = false
@@ -25,10 +40,6 @@ struct SettingsView: View {
     @State private var supabasePasswordInput: String = ""
     @State private var supabaseAuthStatus: String = ""
     @State private var supabaseAuthBusy: Bool = false
-    @State private var replyMemoryTitleInput: String = ""
-    @State private var replyMemoryTriggersInput: String = ""
-    @State private var replyMemorySourceInput: String = ""
-    @State private var replyMemoryGuidanceInput: String = ""
 
     var body: some View {
         ZStack {
@@ -41,6 +52,35 @@ struct SettingsView: View {
                     Text(settings.shortcutInstructionText)
                         .font(.system(size: 13))
                         .foregroundStyle(AppTheme.secondaryText)
+
+                    HStack(spacing: 8) {
+                        ForEach(SettingsDisplayMode.allCases) { mode in
+                            Button {
+                                displayMode = mode
+                            } label: {
+                                Text(mode.title)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 34)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(displayMode == mode ? AppTheme.accent : AppTheme.surface)
+                                    )
+                                    .foregroundStyle(displayMode == mode ? AppTheme.accentText : AppTheme.primaryText)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(6)
+                    .frame(maxWidth: 300)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(AppTheme.surfaceMuted)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                            )
+                    )
 
                     GroupBox {
                         VStack(alignment: .leading, spacing: 12) {
@@ -66,8 +106,10 @@ struct SettingsView: View {
                                 }
                             }
 
-                            settingRow(title: "Default innsettingsmodus") {
-                                modePicker(selection: $settings.globalMode, width: 320)
+                            if displayMode == .advanced {
+                                settingRow(title: "Default innsettingsmodus") {
+                                    modePicker(selection: $settings.globalMode, width: 320)
+                                }
                             }
 
                             settingRow(title: "Mikrofon") {
@@ -115,6 +157,10 @@ struct SettingsView: View {
                                 )
                             }
 
+                            settingRow(title: "Menu popup view") {
+                                statusMenuModeBar()
+                            }
+
                             settingRow(title: "Email replies") {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Picker("Tiltale", selection: $settings.emailReplyGreetingMode) {
@@ -153,28 +199,30 @@ struct SettingsView: View {
                                 }
                             }
 
-                            settingRow(title: "Backend URL") {
-                                TextField(AppSettings.defaultBackendBaseURL, text: $settings.backendBaseURL)
-                                    .textFieldStyle(.plain)
-                                    .storeField(maxWidth: 520)
-                            }
-
-                            settingRow(title: "Backend token/JWT") {
-                                HStack(spacing: 8) {
-                                    SecureField("Bearer token or JWT", text: $settings.backendToken)
+                            if displayMode == .advanced {
+                                settingRow(title: "Backend URL") {
+                                    TextField(AppSettings.defaultBackendBaseURL, text: $settings.backendBaseURL)
                                         .textFieldStyle(.plain)
                                         .storeField(maxWidth: 520)
+                                }
 
-                                    if !settings.backendToken.isEmpty {
-                                        Button("Copy") {
-                                            copyBackendToken()
-                                        }
-                                        .buttonStyle(StoreSecondaryButtonStyle())
+                                settingRow(title: "Backend token/JWT") {
+                                    HStack(spacing: 8) {
+                                        SecureField("Bearer token or JWT", text: $settings.backendToken)
+                                            .textFieldStyle(.plain)
+                                            .storeField(maxWidth: 520)
 
-                                        Button("Clear") {
-                                            settings.backendToken = ""
+                                        if !settings.backendToken.isEmpty {
+                                            Button("Copy") {
+                                                copyBackendToken()
+                                            }
+                                            .buttonStyle(StoreSecondaryButtonStyle())
+
+                                            Button("Clear") {
+                                                settings.backendToken = ""
+                                            }
+                                            .buttonStyle(StoreSecondaryButtonStyle())
                                         }
-                                        .buttonStyle(StoreSecondaryButtonStyle())
                                     }
                                 }
                             }
@@ -205,22 +253,30 @@ struct SettingsView: View {
                                     .buttonStyle(StoreSecondaryButtonStyle())
                                     .disabled(supabaseAuthBusy)
 
-                                    Button("Advanced auth settings") {
-                                        stopShortcutCapture()
-                                        showsShortcutSettings = false
-                                        showsAdvancedAuthSettings = true
+                                    if displayMode == .advanced {
+                                        Button("Advanced auth settings") {
+                                            stopShortcutCapture()
+                                            showsShortcutSettings = false
+                                            showsAdvancedAuthSettings = true
+                                        }
+                                        .buttonStyle(StoreSecondaryButtonStyle())
                                     }
-                                    .buttonStyle(StoreSecondaryButtonStyle())
                                 }
                             } else {
-                                Text("Not signed in. Use the main window to log in, or open advanced auth settings for setup.")
+                                Text(displayMode == .advanced
+                                     ? "Not signed in. Use the main window to log in, or open advanced auth settings for setup."
+                                     : "Not signed in. Use the login screen in the main window.")
                                     .font(.system(size: 12))
                                     .foregroundStyle(AppTheme.secondaryText)
 
-                                Button("Advanced auth settings") {
-                                    stopShortcutCapture()
-                                    showsShortcutSettings = false
-                                    showsAdvancedAuthSettings = true
+                                Button(displayMode == .advanced ? "Advanced auth settings" : "Open advanced settings") {
+                                    if displayMode == .advanced {
+                                        stopShortcutCapture()
+                                        showsShortcutSettings = false
+                                        showsAdvancedAuthSettings = true
+                                    } else {
+                                        displayMode = .advanced
+                                    }
                                 }
                                 .buttonStyle(StoreSecondaryButtonStyle())
                             }
@@ -235,145 +291,169 @@ struct SettingsView: View {
                     }
                     .groupBoxStyle(StoreGroupBoxStyle())
 
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 10) {
+                    if displayMode == .simple {
+                        GroupBox {
                             HStack {
-                                Text("Maks lagrede diktater")
-                                Spacer()
-                                Stepper(
-                                    value: historyMaxEntriesBinding,
-                                    in: 20...2000,
-                                    step: 20
-                                ) {
-                                    Text("\(history.maxEntries)")
-                                        .frame(width: 58, alignment: .trailing)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Need deeper controls?")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(AppTheme.primaryText)
+                                    Text("Open Advanced for backend, diagnostics, privacy and auth troubleshooting.")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(AppTheme.secondaryText)
                                 }
-                                .frame(width: 180)
+                                Spacer()
+                                Button("Open Advanced") {
+                                    displayMode = .advanced
+                                }
+                                .buttonStyle(StoreSecondaryButtonStyle())
                             }
+                        } label: {
+                            Text("Advanced")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .groupBoxStyle(StoreGroupBoxStyle())
+                    } else {
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Text("Maks lagrede diktater")
+                                    Spacer()
+                                    Stepper(
+                                        value: historyMaxEntriesBinding,
+                                        in: 20...2000,
+                                        step: 20
+                                    ) {
+                                        Text("\(history.maxEntries)")
+                                            .frame(width: 58, alignment: .trailing)
+                                    }
+                                    .frame(width: 180)
+                                }
 
-                            HStack {
-                                Text("Lagringer nå: \(history.entries.count)")
+                                HStack {
+                                    Text("Lagringer nå: \(history.entries.count)")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                    Spacer()
+                                    Button("Tøm historikk") {
+                                        history.clearAll()
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                }
+                            }
+                        } label: {
+                            Text("History")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .groupBoxStyle(StoreGroupBoxStyle())
+
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 12) {
+                                privacyInfoRow(
+                                    title: "Talegjenkjenning",
+                                    detail: "FlowSpeak bruker Apples talegjenkjenning etter at du har gitt tillatelse. macOS kan sende taledata til Apple for å behandle forespørslene."
+                                )
+
+                                privacyInfoRow(
+                                    title: "AI-behandling",
+                                    detail: "Teksten du dikterer sendes til FlowSpeak-backenden. Hvis AI er aktiv, sender backenden tekst videre til OpenAI for formatering, oversettelse og rewrite."
+                                )
+
+                                privacyInfoRow(
+                                    title: "Lokalt lagret på denne Mac-en",
+                                    detail: "Dikteringshistorikk, språk- og stilvalg, valgt mikrofon og aktiv innloggingsøkt lagres lokalt på denne maskinen."
+                                )
+
+                                privacyInfoRow(
+                                    title: "Konto",
+                                    detail: "Innlogging og sesjonsfornying håndteres via Supabase."
+                                )
+
+                                HStack(spacing: 8) {
+                                    Button("Clear local history") {
+                                        history.clearAll()
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+
+                                    Button("Sign out and clear local session") {
+                                        clearLocalPrivateData()
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                }
+                            }
+                        } label: {
+                            Text("Privacy")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .groupBoxStyle(StoreGroupBoxStyle())
+
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Klientloggen lagrer lokale auth-, permission- og AI-feil, slik at testere kan sende deg noe konkret når appen stopper.")
                                     .font(.system(size: 12))
                                     .foregroundStyle(AppTheme.secondaryText)
-                                Spacer()
-                                Button("Tøm historikk") {
-                                    history.clearAll()
+                                    .fixedSize(horizontal: false, vertical: true)
+
+                                HStack(spacing: 8) {
+                                    Text("Hendelser: \(appLog.entryCount)")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(AppTheme.primaryText)
+
+                                    Spacer()
+
+                                    Button("Copy debug log") {
+                                        copyDebugLog()
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                    .disabled(appLog.entryCount == 0)
+
+                                    Button("Save debug log…") {
+                                        saveDebugLog()
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                    .disabled(appLog.entryCount == 0)
+
+                                    Button("Clear debug log") {
+                                        appLog.clear()
+                                    }
+                                    .buttonStyle(StoreSecondaryButtonStyle())
+                                    .disabled(appLog.entryCount == 0)
                                 }
-                                .buttonStyle(StoreSecondaryButtonStyle())
+
+                                if let latest = appLog.latestSummary, !latest.isEmpty {
+                                    Text(latest)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                        .lineLimit(2)
+                                        .padding(10)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .fill(AppTheme.surfaceMuted)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 10)
+                                                        .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                                                )
+                                        )
+                                }
                             }
+                        } label: {
+                            Text("Diagnostics")
+                                .font(.system(size: 13, weight: .semibold))
                         }
-                    } label: {
-                        Text("History")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .groupBoxStyle(StoreGroupBoxStyle())
+                        .groupBoxStyle(StoreGroupBoxStyle())
 
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 12) {
-                            privacyInfoRow(
-                                title: "Talegjenkjenning",
-                                detail: "FlowSpeak bruker Apples talegjenkjenning etter at du har gitt tillatelse. macOS kan sende taledata til Apple for å behandle forespørslene."
-                            )
-
-                            privacyInfoRow(
-                                title: "AI-behandling",
-                                detail: "Teksten du dikterer sendes til FlowSpeak-backenden. Hvis AI er aktiv, sender backenden tekst videre til OpenAI for formatering, oversettelse og rewrite."
-                            )
-
-                            privacyInfoRow(
-                                title: "Lokalt lagret på denne Mac-en",
-                                detail: "Dikteringshistorikk, språk- og stilvalg, valgt mikrofon og aktiv innloggingsøkt lagres lokalt på denne maskinen."
-                            )
-
-                            privacyInfoRow(
-                                title: "Konto",
-                                detail: "Innlogging og sesjonsfornying håndteres via Supabase."
-                            )
-
-                            HStack(spacing: 8) {
-                                Button("Clear local history") {
-                                    history.clearAll()
-                                }
-                                .buttonStyle(StoreSecondaryButtonStyle())
-
-                                Button("Sign out and clear local session") {
-                                    clearLocalPrivateData()
-                                }
-                                .buttonStyle(StoreSecondaryButtonStyle())
-                            }
-                        }
-                    } label: {
-                        Text("Privacy")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .groupBoxStyle(StoreGroupBoxStyle())
-
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Klientloggen lagrer lokale auth-, permission- og AI-feil, slik at testere kan sende deg noe konkret når appen stopper.")
+                        GroupBox {
+                            Text("Permissions: aktiver FlowSpeak i Privacy & Security → Accessibility + Input Monitoring.")
                                 .font(.system(size: 12))
                                 .foregroundStyle(AppTheme.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            HStack(spacing: 8) {
-                                Text("Hendelser: \(appLog.entryCount)")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(AppTheme.primaryText)
-
-                                Spacer()
-
-                                Button("Copy debug log") {
-                                    copyDebugLog()
-                                }
-                                .buttonStyle(StoreSecondaryButtonStyle())
-                                .disabled(appLog.entryCount == 0)
-
-                                Button("Save debug log…") {
-                                    saveDebugLog()
-                                }
-                                .buttonStyle(StoreSecondaryButtonStyle())
-                                .disabled(appLog.entryCount == 0)
-
-                                Button("Clear debug log") {
-                                    appLog.clear()
-                                }
-                                .buttonStyle(StoreSecondaryButtonStyle())
-                                .disabled(appLog.entryCount == 0)
-                            }
-
-                            if let latest = appLog.latestSummary, !latest.isEmpty {
-                                Text(latest)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(AppTheme.secondaryText)
-                                    .lineLimit(2)
-                                    .padding(10)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(AppTheme.surfaceMuted)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 10)
-                                                    .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
-                                            )
-                                    )
-                            }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } label: {
+                            Text("Permissions")
+                                .font(.system(size: 13, weight: .semibold))
                         }
-                    } label: {
-                        Text("Diagnostics")
-                            .font(.system(size: 13, weight: .semibold))
+                        .groupBoxStyle(StoreGroupBoxStyle())
                     }
-                    .groupBoxStyle(StoreGroupBoxStyle())
-
-                    GroupBox {
-                        Text("Permissions: aktiver FlowSpeak i Privacy & Security → Accessibility + Input Monitoring.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(AppTheme.secondaryText)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } label: {
-                        Text("Permissions")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .groupBoxStyle(StoreGroupBoxStyle())
                 }
                 .padding(18)
             }
@@ -451,7 +531,7 @@ struct SettingsView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(
                             selection.wrappedValue == level
-                                ? Color.white
+                                ? AppTheme.accentText
                                 : AppTheme.primaryText
                         )
                         .frame(maxWidth: .infinity)
@@ -470,6 +550,50 @@ struct SettingsView: View {
         }
         .padding(6)
         .frame(maxWidth: 520)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(AppTheme.surfaceMuted)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func statusMenuModeBar() -> some View {
+        HStack(spacing: 6) {
+            Button {
+                settings.statusMenuAdvancedModeEnabled = false
+            } label: {
+                Text("Simple")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(settings.statusMenuAdvancedModeEnabled ? AppTheme.primaryText : AppTheme.accentText)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(settings.statusMenuAdvancedModeEnabled ? AppTheme.surface : AppTheme.accent)
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                settings.statusMenuAdvancedModeEnabled = true
+            } label: {
+                Text("Advanced")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(settings.statusMenuAdvancedModeEnabled ? AppTheme.accentText : AppTheme.primaryText)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(settings.statusMenuAdvancedModeEnabled ? AppTheme.accent : AppTheme.surface)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(6)
+        .frame(maxWidth: 280)
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(AppTheme.surfaceMuted)
@@ -972,26 +1096,6 @@ struct SettingsView: View {
         supabaseEmailInput = ""
         supabasePasswordInput = ""
         supabaseAuthStatus = "Local history and session removed from this Mac."
-    }
-
-    private var canAddReplyMemory: Bool {
-        !replyMemoryTitleInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !replyMemoryTriggersInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !replyMemoryGuidanceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func addReplyMemory() {
-        settings.addReplyMemory(
-            title: replyMemoryTitleInput,
-            triggerText: replyMemoryTriggersInput,
-            sourceText: replyMemorySourceInput,
-            guidance: replyMemoryGuidanceInput
-        )
-
-        replyMemoryTitleInput = ""
-        replyMemoryTriggersInput = ""
-        replyMemorySourceInput = ""
-        replyMemoryGuidanceInput = ""
     }
 
     private func startShortcutCapture() {

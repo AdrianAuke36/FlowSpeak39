@@ -8,7 +8,6 @@
 import Foundation
 import Combine
 import AVFoundation
-import Security
 
 enum AppLanguage: String, CaseIterable, Identifiable {
     case norwegian = "nb-NO"
@@ -340,6 +339,7 @@ final class AppSettings: ObservableObject {
         static let writingStyle = "writingStyle"
         static let interpretationLevel = "interpretationLevel"
         static let shortcutTriggerKey = "shortcutTriggerKey"
+        static let statusMenuAdvancedModeEnabled = "statusMenuAdvancedModeEnabled"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
         static let backendBaseURL = "backendBaseURL"
         static let backendToken = "backendToken"
@@ -401,6 +401,10 @@ final class AppSettings: ObservableObject {
 
     @Published var shortcutTriggerKey: ShortcutTriggerKey {
         didSet { UserDefaults.standard.set(shortcutTriggerKey.rawValue, forKey: StorageKey.shortcutTriggerKey) }
+    }
+
+    @Published var statusMenuAdvancedModeEnabled: Bool {
+        didSet { UserDefaults.standard.set(statusMenuAdvancedModeEnabled, forKey: StorageKey.statusMenuAdvancedModeEnabled) }
     }
 
     @Published var selectedMicrophoneUID: String {
@@ -554,6 +558,12 @@ final class AppSettings: ObservableObject {
 
         let rawShortcutTrigger = UserDefaults.standard.string(forKey: StorageKey.shortcutTriggerKey) ?? ShortcutTriggerKey.function.rawValue
         self.shortcutTriggerKey = ShortcutTriggerKey(rawValue: rawShortcutTrigger) ?? .function
+
+        if UserDefaults.standard.object(forKey: StorageKey.statusMenuAdvancedModeEnabled) == nil {
+            self.statusMenuAdvancedModeEnabled = false
+        } else {
+            self.statusMenuAdvancedModeEnabled = UserDefaults.standard.bool(forKey: StorageKey.statusMenuAdvancedModeEnabled)
+        }
 
         let rawMicrophone = UserDefaults.standard.string(forKey: StorageKey.selectedMicrophoneUID) ?? MicrophoneOption.systemDefaultID
         self.selectedMicrophoneUID = rawMicrophone
@@ -1072,117 +1082,5 @@ private enum AppSettingsError: LocalizedError {
         case .auth(let message):
             return message
         }
-    }
-}
-
-private enum KeychainSecretStore {
-    private static let service = "Adrian.FlowSpeak"
-    private static let backendTokenAccount = "backend_api_token"
-    private static let supabaseAnonKeyAccount = "supabase_anon_key"
-    private static let supabaseRefreshTokenAccount = "supabase_refresh_token"
-
-    static func saveBackendToken(_ token: String) {
-        if token.isEmpty {
-            delete(account: backendTokenAccount)
-            return
-        }
-
-        let encoded = Data(token.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: backendTokenAccount
-        ]
-
-        let updateAttributes: [String: Any] = [
-            kSecValueData as String: encoded
-        ]
-
-        let status = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
-        if status == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData as String] = encoded
-            SecItemAdd(insert as CFDictionary, nil)
-        }
-    }
-
-    static func loadBackendToken() -> String {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: backendTokenAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return "" }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    static func saveSupabaseAnonKey(_ value: String) {
-        save(secret: value, account: supabaseAnonKeyAccount)
-    }
-
-    static func loadSupabaseAnonKey() -> String {
-        loadSecret(account: supabaseAnonKeyAccount)
-    }
-
-    static func saveSupabaseRefreshToken(_ value: String) {
-        save(secret: value, account: supabaseRefreshTokenAccount)
-    }
-
-    static func loadSupabaseRefreshToken() -> String {
-        loadSecret(account: supabaseRefreshTokenAccount)
-    }
-
-    private static func save(secret: String, account: String) {
-        let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            delete(account: account)
-            return
-        }
-
-        let encoded = Data(trimmed.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        let updateAttributes: [String: Any] = [
-            kSecValueData as String: encoded
-        ]
-
-        let status = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
-        if status == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData as String] = encoded
-            SecItemAdd(insert as CFDictionary, nil)
-        }
-    }
-
-    private static func loadSecret(account: String) -> String {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return "" }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func delete(account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
     }
 }

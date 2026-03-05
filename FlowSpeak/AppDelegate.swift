@@ -120,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         configureHomeWindowBehavior()
+        ensureKeyboardMonitors()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -136,22 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         cancelPendingFnStart()
         cancelPendingFnReleaseAction()
-        if let globalFlagsMonitor {
-            NSEvent.removeMonitor(globalFlagsMonitor)
-            self.globalFlagsMonitor = nil
-        }
-        if let localFlagsMonitor {
-            NSEvent.removeMonitor(localFlagsMonitor)
-            self.localFlagsMonitor = nil
-        }
-        if let globalKeyDownMonitor {
-            NSEvent.removeMonitor(globalKeyDownMonitor)
-            self.globalKeyDownMonitor = nil
-        }
-        if let localKeyDownMonitor {
-            NSEvent.removeMonitor(localKeyDownMonitor)
-            self.localKeyDownMonitor = nil
-        }
+        teardownKeyboardMonitors()
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -201,6 +187,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .sink { [weak self] baseURL, token in
                 self?.applyBackendConfiguration(baseURL: baseURL, token: token, persist: false)
                 self?.refreshSignOutMenuState()
+            }
+            .store(in: &cancellables)
+
+        settings.$statusMenuAdvancedModeEnabled
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.rebuildStatusMenu()
             }
             .store(in: &cancellables)
     }
@@ -255,6 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - fn-tast via NSEvent local+global monitor
 
     private func setupFnKeyTap() {
+        teardownKeyboardMonitors()
         globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleFlagsChangedEvent(event)
         }
@@ -269,6 +263,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return event }
             return self.handleKeyDownEvent(event) ? nil : event
         }
+    }
+
+    private func teardownKeyboardMonitors() {
+        if let globalFlagsMonitor {
+            NSEvent.removeMonitor(globalFlagsMonitor)
+            self.globalFlagsMonitor = nil
+        }
+        if let localFlagsMonitor {
+            NSEvent.removeMonitor(localFlagsMonitor)
+            self.localFlagsMonitor = nil
+        }
+        if let globalKeyDownMonitor {
+            NSEvent.removeMonitor(globalKeyDownMonitor)
+            self.globalKeyDownMonitor = nil
+        }
+        if let localKeyDownMonitor {
+            NSEvent.removeMonitor(localKeyDownMonitor)
+            self.localKeyDownMonitor = nil
+        }
+    }
+
+    private func ensureKeyboardMonitors() {
+        let hasAllMonitors =
+            globalFlagsMonitor != nil &&
+            localFlagsMonitor != nil &&
+            globalKeyDownMonitor != nil &&
+            localKeyDownMonitor != nil
+        guard !hasAllMonitors else { return }
+
+        AppLogStore.shared.record(.warning, "Keyboard monitors missing, reinitializing")
+        setupFnKeyTap()
     }
 
     private func handleFlagsChangedEvent(_ event: NSEvent) {
@@ -850,7 +875,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupStatusBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         configureStatusButton()
+        rebuildStatusMenu()
+    }
 
+    private func rebuildStatusMenu() {
         let menu = NSMenu()
 
         let backendItem = NSMenuItem(title: "Sjekker backend…", action: nil, keyEquivalent: "")
@@ -859,17 +887,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makeMenuItem(title: "Home", action: #selector(openHome)))
+        menu.addItem(makeMenuViewRootMenuItem())
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(makeSectionHeader(title: "Preferences"))
-        let aiItem = makeMenuItem(title: "AI Polish: ON", action: #selector(toggleAI))
-        menu.addItem(aiItem)
-        aiMenuItem = aiItem
+        if settings.statusMenuAdvancedModeEnabled {
+            menu.addItem(makeSectionHeader(title: "Preferences"))
+            let aiItem = makeMenuItem(title: "AI Polish: ON", action: #selector(toggleAI))
+            menu.addItem(aiItem)
+            aiMenuItem = aiItem
 
-        menu.addItem(makeMicrophoneRootMenuItem())
-        menu.addItem(makeLanguagesRootMenuItem())
-        menu.addItem(makeStyleRootMenuItem())
-        menu.addItem(makeInterpretationRootMenuItem())
+            menu.addItem(makeMicrophoneRootMenuItem())
+            menu.addItem(makeLanguagesRootMenuItem())
+            menu.addItem(makeStyleRootMenuItem())
+            menu.addItem(makeInterpretationRootMenuItem())
+        } else {
+            menu.addItem(makeSectionHeader(title: "Quick"))
+            menu.addItem(makeMicrophoneRootMenuItem())
+            menu.addItem(makeLanguagesRootMenuItem())
+            menu.addItem(makeAdvancedPreferencesRootMenuItem())
+        }
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makeSectionHeader(title: "Account"))
@@ -881,7 +917,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(makeMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
+        updateBackendMenuItem(online: backendOnline)
         refreshSignOutMenuState()
+        refreshAIMenuTitle()
+        refreshMicrophoneMenuState()
+        refreshLanguageMenuState()
+        refreshTranslationMenuState()
+        refreshStyleMenuState()
+        refreshInterpretationMenuState()
     }
 
     private func configureStatusButton() {
@@ -902,6 +945,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item
+    }
+
+    private func makeMenuViewRootMenuItem() -> NSMenuItem {
+        let rootItem = NSMenuItem(title: "Menu View", action: nil, keyEquivalent: "")
+        let modeMenu = NSMenu(title: "Menu View")
+
+        let simpleItem = makeMenuItem(title: "Simple", action: #selector(selectSimpleMenuView))
+        simpleItem.state = settings.statusMenuAdvancedModeEnabled ? .off : .on
+        modeMenu.addItem(simpleItem)
+
+        let advancedItem = makeMenuItem(title: "Advanced", action: #selector(selectAdvancedMenuView))
+        advancedItem.state = settings.statusMenuAdvancedModeEnabled ? .on : .off
+        modeMenu.addItem(advancedItem)
+
+        rootItem.submenu = modeMenu
+        return rootItem
+    }
+
+    private func makeAdvancedPreferencesRootMenuItem() -> NSMenuItem {
+        let rootItem = NSMenuItem(title: "Advanced", action: nil, keyEquivalent: "")
+        let advancedMenu = NSMenu(title: "Advanced")
+
+        let aiItem = makeMenuItem(title: "AI Polish: ON", action: #selector(toggleAI))
+        advancedMenu.addItem(aiItem)
+        aiMenuItem = aiItem
+
+        advancedMenu.addItem(makeStyleRootMenuItem())
+        advancedMenu.addItem(makeInterpretationRootMenuItem())
+        rootItem.submenu = advancedMenu
+        return rootItem
     }
 
     private func makeMicrophoneRootMenuItem() -> NSMenuItem {
@@ -1189,6 +1262,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func signOut() {
         settings.signOutSupabaseSession()
+    }
+
+    @objc private func selectSimpleMenuView() {
+        settings.statusMenuAdvancedModeEnabled = false
+    }
+
+    @objc private func selectAdvancedMenuView() {
+        settings.statusMenuAdvancedModeEnabled = true
     }
 
     @objc private func selectLanguage(_ sender: NSMenuItem) {
