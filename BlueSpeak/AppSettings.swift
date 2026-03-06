@@ -1,6 +1,6 @@
 //
 //  AppSettings.swift
-//  FlowSpeak
+//  BlueSpeak
 //
 //  Created by Adrian Auke on 20/02/2026.
 //
@@ -372,12 +372,16 @@ final class AppSettings: ObservableObject {
 
     static let defaultBackendBaseURL = "http://127.0.0.1:3000"
     static let defaultSupabaseProjectURL = ""
-    private static let legacyHostedBackendURLs: Set<String> = [
-        "https://flowspeak-backend.onrender.com"
+    private static let legacyHostedBackendURLs: Set<String> = []
+    private static let infoBackendBaseURLKeys = [
+        "BlueSpeakBackendBaseURL"
     ]
-    private static let infoBackendBaseURLKey = "FlowSpeakBackendBaseURL"
-    private static let infoSupabaseProjectURLKey = "FlowSpeakSupabaseProjectURL"
-    private static let infoSupabaseAnonKeyKey = "FlowSpeakSupabaseAnonKey"
+    private static let infoSupabaseProjectURLKeys = [
+        "BlueSpeakSupabaseProjectURL"
+    ]
+    private static let infoSupabaseAnonKeyKeys = [
+        "BlueSpeakSupabaseAnonKey"
+    ]
 
     @Published var appLanguage: AppLanguage {
         didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: StorageKey.appLanguage) }
@@ -578,8 +582,9 @@ final class AppSettings: ObservableObject {
             self.backendBaseURL = normalizedBackendURL
         }
 
-        let envToken = ProcessInfo.processInfo.environment["FLOWSPEAK_BACKEND_TOKEN"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let envToken = Self.envString(forKeys: [
+            "BLUESPEAK_BACKEND_TOKEN"
+        ])
         let storedToken = UserDefaults.standard.string(forKey: StorageKey.backendToken)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.backendToken = storedToken.isEmpty ? envToken : storedToken
@@ -588,9 +593,10 @@ final class AppSettings: ObservableObject {
         let rawSupabaseProjectURL = UserDefaults.standard.string(forKey: StorageKey.supabaseProjectURL) ?? bootstrapSupabaseProjectURL
         self.supabaseProjectURL = Self.normalizedSupabaseProjectURL(rawSupabaseProjectURL)
 
-        let envSupabaseAnonKey = ProcessInfo.processInfo.environment["FLOWSPEAK_SUPABASE_ANON_KEY"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let infoSupabaseAnonKey = Self.infoString(forKey: Self.infoSupabaseAnonKeyKey)
+        let envSupabaseAnonKey = Self.envString(forKeys: [
+            "BLUESPEAK_SUPABASE_ANON_KEY"
+        ])
+        let infoSupabaseAnonKey = Self.infoString(forKeys: Self.infoSupabaseAnonKeyKeys)
         let storedSupabaseAnonKey = UserDefaults.standard.string(forKey: StorageKey.supabaseAnonKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !storedSupabaseAnonKey.isEmpty {
@@ -725,13 +731,14 @@ final class AppSettings: ObservableObject {
     }
 
     private static func bootstrapBackendBaseURL() -> String {
-        let envValue = ProcessInfo.processInfo.environment["FLOWSPEAK_BACKEND_BASE_URL"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let envValue = envString(forKeys: [
+            "BLUESPEAK_BACKEND_BASE_URL"
+        ])
         if !envValue.isEmpty {
             return normalizedBackendBaseURL(envValue)
         }
 
-        let infoValue = infoString(forKey: infoBackendBaseURLKey)
+        let infoValue = infoString(forKeys: infoBackendBaseURLKeys)
         if !infoValue.isEmpty {
             return normalizedBackendBaseURL(infoValue)
         }
@@ -740,13 +747,14 @@ final class AppSettings: ObservableObject {
     }
 
     private static func bootstrapSupabaseProjectURL() -> String {
-        let envValue = ProcessInfo.processInfo.environment["FLOWSPEAK_SUPABASE_PROJECT_URL"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let envValue = envString(forKeys: [
+            "BLUESPEAK_SUPABASE_PROJECT_URL"
+        ])
         if !envValue.isEmpty {
             return normalizedSupabaseProjectURL(envValue)
         }
 
-        let infoValue = infoString(forKey: infoSupabaseProjectURLKey)
+        let infoValue = infoString(forKeys: infoSupabaseProjectURLKeys)
         if !infoValue.isEmpty {
             return normalizedSupabaseProjectURL(infoValue)
         }
@@ -759,6 +767,27 @@ final class AppSettings: ObservableObject {
             return ""
         }
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func infoString(forKeys keys: [String]) -> String {
+        for key in keys {
+            let value = infoString(forKey: key)
+            if !value.isEmpty {
+                return value
+            }
+        }
+        return ""
+    }
+
+    private static func envString(forKeys keys: [String]) -> String {
+        for key in keys {
+            let value = ProcessInfo.processInfo.environment[key]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !value.isEmpty {
+                return value
+            }
+        }
+        return ""
     }
 
     // A refresh token is enough to consider the user "logged in" because we can mint a new JWT on demand.

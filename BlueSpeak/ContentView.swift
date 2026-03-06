@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  FlowSpeak
+//  BlueSpeak
 //
 //  Created by Adrian Auke on 20/02/2026.
 //

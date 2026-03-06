@@ -1396,7 +1396,7 @@ async function requestModelDraft({
 
 const MODE_RULES = {
   email_subject: "Short email subject. No greeting, no period.",
-  email_body:    "Email body. Add greeting/sign-off if missing. Keep short paragraphs with clear line breaks.",
+  email_body:    "Email body. Keep short paragraphs with clear line breaks. If a full email is clearly intended and greeting/sign-off are missing, add neutral ones.",
   chat_message:  "Chat message. Concise and natural.",
   note:          "Note. Bullet points if helpful.",
   generic:       "Neutral style.",
@@ -1412,8 +1412,13 @@ const STYLE_RULES = {
 const INTERPRETATION_RULES = {
   literal: "Interpretation: literal. Stay as close as possible to the spoken wording and order. Preserve phrasing, hesitations, and sentence structure unless something is clearly a recognition artifact.",
   balanced: "Interpretation: balanced. Clean up the text while staying close to what the user said.",
-  meaning: "Interpretation: meaning. Prioritize the user's likely intent over literal wording. You may merge fragments, reorder ideas, smooth awkward phrasing, and turn rough speech into the clearest natural sentence or paragraph, but do not add new facts, commitments, or requests."
+  meaning: "Interpretation: meaning. Prioritize the user's likely intent over literal wording. You may merge fragments, reorder ideas, smooth awkward phrasing, and turn rough speech into the clearest natural sentence or paragraph, but do not add new facts, commitments, or requests. If details are uncertain, keep them generic instead of guessing."
 };
+
+const POLISH_BASE_GUARDRAIL =
+  "Task type is transcription polishing, not chat or Q&A. Never answer, agree/disagree, ask follow-up questions, or add assistant commentary. Rewrite only the dictated content.";
+const POLISH_FACT_GUARDRAIL =
+  "Preserve concrete details (names, dates, numbers, amounts, URLs, explicit yes/no intent) unless they are clearly recognition errors.";
 
 function normalizeStyle(raw) {
   const v = String(raw || "").trim().toLowerCase();
@@ -1450,6 +1455,8 @@ function isLikelyPersonNameToken(value) {
   return /^[a-zæøå][a-zæøå'\-]{1,29}$/i.test(token);
 }
 
+const WEEKDAY_TOKEN_PATTERN = "(?:mandag|tirsdag|onsdag|torsdag|fredag|lørdag|laurdag|søndag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)";
+
 function applyInlineNoCorrections(text) {
   let out = String(text || "");
   if (!out) return out;
@@ -1471,6 +1478,13 @@ function applyInlineNoCorrections(text) {
     /(\b\d+(?:[.,]\d+)?\s*(?:millioner?|milliarder?|kroner|kr|%)?\b)\s*(?:[,;.]?\s*)?(?:men\s+)?(?:nei|no)\s*(?:[,;.]?\s*)?(?:jeg mener|i mean)?\s*(\d+(?:[.,]\d+)?\s*(?:millioner?|milliarder?|kroner|kr|%)?\b)/ig,
     (_, __oldValue, newValue) => String(newValue).trim()
   );
+
+  // "torsdag, ehh nei fredag" / "on thursday no friday" -> keep latest day value
+  const weekdayCorrectionPattern = new RegExp(
+    `(\\b(?:på\\s+|on\\s+)?${WEEKDAY_TOKEN_PATTERN}\\b)\\s*(?:[,;.]?\\s*)?(?:men\\s+)?(?:eh+|ehm+|øh+|øhm+|uh+|uhm+|um+|umm+)?\\s*(?:[,;.]?\\s*)?(?:nei|no)\\s*(?:[,;.]?\\s*)?(?:jeg\\s+mener|i\\s+mean)?\\s*((?:på\\s+|on\\s+)?${WEEKDAY_TOKEN_PATTERN}\\b)`,
+    "ig"
+  );
+  out = out.replace(weekdayCorrectionPattern, (_, __oldValue, newValue) => String(newValue).trim());
 
   return out;
 }
@@ -1833,6 +1847,197 @@ function normalizePunctuationArtifacts(text) {
     .trim();
 }
 
+const BULLET_COMMAND_PREFIX_RE = /^\s*(?:(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\s+(?:dette\s+)?(?:som\s+)?(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)|(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste))\s*[:,-]?\s*/i;
+const BULLET_COMMAND_HINT_RE = /\b(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\b[\s\S]{0,48}\b(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)\b/i;
+const POINT_MARKER_RE = /\b(?:punkt|point)\s*(?:\d+|en|ett|to|tre|fire|fem|seks|sju|syv|åtte|ni|ti|one|two|three|four|five|six|seven|eight|nine|ten)\s*[:.)-]?\s*/ig;
+const PARENTHESIS_COMMAND_RE = /\b(?:åpen|open|start|venstre|left)\s+parentes\b|\b(?:lukk|lukk|slutt|close|høyre|right)\s+parentes\b|\b(?:i\s+parentes|in\s+parentheses)\b/i;
+const SPOKEN_EMOJI_ALIASES = [
+  { pattern: /\b(?:emoji\s+)?smilefjes\b/gi, emoji: "🙂" },
+  { pattern: /\b(?:emoji\s+)?smiley\b/gi, emoji: "🙂" },
+  { pattern: /\b(?:emoji\s+)?gladfjes\b/gi, emoji: "😀" },
+  { pattern: /\b(?:emoji\s+)?winkefjes\b/gi, emoji: "😉" },
+  { pattern: /\b(?:emoji\s+)?hjerte\b/gi, emoji: "❤️" },
+  { pattern: /\b(?:emoji\s+)?tommel\s*opp\b/gi, emoji: "👍" },
+  { pattern: /\b(?:emoji\s+)?tommel\s*ned\b/gi, emoji: "👎" },
+  { pattern: /\b(?:emoji\s+)?latterfjes\b/gi, emoji: "😂" },
+  { pattern: /\b(?:emoji\s+)?gråtefjes\b/gi, emoji: "😢" },
+  { pattern: /\b(?:emoji\s+)?rakett\b/gi, emoji: "🚀" },
+  { pattern: /\b(?:emoji\s+)?ild\b/gi, emoji: "🔥" },
+  { pattern: /\b(?:emoji\s+)?hake\b/gi, emoji: "✅" }
+];
+
+function hasExplicitBulletCommand(text) {
+  const source = String(text || "").trim();
+  if (!source) return false;
+  return BULLET_COMMAND_PREFIX_RE.test(source) || BULLET_COMMAND_HINT_RE.test(source);
+}
+
+function splitBulletItems(content) {
+  const source = String(content || "").trim();
+  if (!source) return [];
+
+  let working = source
+    .replace(/\r\n/g, "\n")
+    .replace(POINT_MARKER_RE, "\n")
+    .replace(/\s*\n+\s*/g, "\n")
+    .trim();
+
+  let parts = [];
+  if (working.includes("\n")) {
+    parts = working.split(/\n+/);
+  } else if (/[;,]/.test(working)) {
+    parts = working.split(/\s*[;,]\s*/);
+  } else if (/\b(?:og|and)\b/i.test(working)) {
+    parts = working.split(/\s+\b(?:og|and)\b\s+/i);
+  } else {
+    parts = [working];
+  }
+
+  const expanded = [];
+  for (const part of parts) {
+    const andParts = String(part || "").split(/\s+\b(?:og|and)\b\s+/i);
+    if (andParts.length > 1) {
+      expanded.push(...andParts);
+    } else {
+      expanded.push(part);
+    }
+  }
+
+  return expanded
+    .map((item) => item.replace(/^[\-•*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function applyBulletFormattingCommand(text) {
+  const source = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!source) return source;
+  if (!hasExplicitBulletCommand(source)) return source;
+
+  const stripped = source.replace(BULLET_COMMAND_PREFIX_RE, "").trim();
+  if (!stripped) return source;
+
+  const items = splitBulletItems(stripped);
+  if (!items.length) return source;
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
+function applySpokenParenthesisCommands(text) {
+  let out = String(text || "");
+  if (!out) return out;
+
+  out = out
+    .replace(/\b(?:åpen|open|start|venstre|left)\s+parentes\b/gi, "(")
+    .replace(/\b(?:lukk|lukk|slutt|close|høyre|right)\s+parentes\b/gi, ")")
+    .replace(/\b(?:i\s+parentes|in\s+parentheses)\s*[:,]?\s*([^\n,.!?;]+)/gi, "($1)");
+
+  out = out
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .replace(/([^\s(])\(/g, "$1 (")
+    .replace(/\)([^\s.,!?;:\)\]])/g, ") $1")
+    .replace(/[ \t]+([,.;!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ");
+
+  return out;
+}
+
+function replaceSpokenEmojiAliases(text) {
+  let out = String(text || "");
+  if (!out) return out;
+
+  for (const { pattern, emoji } of SPOKEN_EMOJI_ALIASES) {
+    out = out.replace(pattern, emoji);
+  }
+
+  out = out
+    .replace(/[ \t]+([,.;!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return out;
+}
+
+function applySpokenFormattingPostprocess(text) {
+  let out = String(text || "");
+  if (!out) return out;
+
+  out = applyBulletFormattingCommand(out);
+  out = applySpokenParenthesisCommands(out);
+  out = replaceSpokenEmojiAliases(out);
+  return out;
+}
+
+function hasSpokenFormattingCommandHints(text) {
+  const source = String(text || "").trim();
+  if (!source) return false;
+  if (hasExplicitBulletCommand(source)) return true;
+  if (PARENTHESIS_COMMAND_RE.test(source)) return true;
+  return false;
+}
+
+function extractEmojis(text) {
+  return String(text || "").match(/\p{Extended_Pictographic}/gu) || [];
+}
+
+function preserveRequestedEmojis(sourceText, outputText) {
+  const requested = Array.from(new Set(extractEmojis(sourceText)));
+  if (!requested.length) return String(outputText || "").trim();
+
+  let out = String(outputText || "").trim();
+  if (!out) {
+    return requested.join(" ");
+  }
+  if (extractEmojis(out).length > 0) {
+    return out;
+  }
+
+  for (const emoji of requested) {
+    if (!out.includes(emoji)) {
+      out = `${out} ${emoji}`.trim();
+    }
+  }
+  return out;
+}
+
+function preserveRequestedBulletLayout(sourceText, outputText) {
+  const source = String(sourceText || "").trim();
+  let out = String(outputText || "").trim();
+  if (!source || !out) return out;
+  if (!hasExplicitBulletCommand(source)) return out;
+  if (/^\s*[-•*]\s+/m.test(out)) return out;
+
+  const fromSource = applyBulletFormattingCommand(source);
+  if (fromSource && fromSource !== source) {
+    out = fromSource;
+  }
+  return out;
+}
+
+function extractFirstParentheticalSegment(text) {
+  const match = String(text || "").match(/\(([^()]{1,180})\)/);
+  return match ? String(match[1] || "").trim() : "";
+}
+
+function preserveRequestedParentheses(sourceText, outputText) {
+  const source = String(sourceText || "").trim();
+  let out = String(outputText || "").trim();
+  if (!source || !out) return out;
+  if (!source.includes("(") || !source.includes(")")) return out;
+  if (/\([^()]+\)/.test(out)) return out;
+
+  const parenthetical = extractFirstParentheticalSegment(source);
+  if (!parenthetical) return out;
+
+  const tokenPattern = new RegExp(`\\b${escapeRegExp(parenthetical)}\\b`, "i");
+  if (tokenPattern.test(out)) {
+    out = out.replace(tokenPattern, (segment) => `(${segment})`);
+    return out;
+  }
+
+  return `(${parenthetical}) ${out}`.trim();
+}
+
 function normalizeTargetLanguage(raw) {
   const v = String(raw || "").trim();
   return v || DEFAULT_TARGET_LANGUAGE;
@@ -1961,7 +2166,8 @@ function finalizePolishOutput(text, { style, mode, interpretationLevel }) {
   const styled = interpretationLevel === "literal"
     ? locallyPolished
     : applyStyleHeuristics(locallyPolished, style, mode);
-  return normalizePunctuationArtifacts(styled);
+  const withSpokenFormatting = applySpokenFormattingPostprocess(styled);
+  return normalizePunctuationArtifacts(withSpokenFormatting);
 }
 
 function isBrowserBundle(bundleId) {
@@ -2076,6 +2282,8 @@ function buildPolishSystemPrompt({
   targetLanguageForced,
   interpretationLevel
 }) {
+  const selfCorrectionRule = "Self-correction precedence: if the user revises themselves (for example 'torsdag ... nei fredag', 'eh nei', 'nei, jeg mener', 'no, I mean'), keep only the latest corrected detail. Remove superseded alternatives, false starts, and correction cue words.";
+
   if (targetLanguageForced) {
     const translationRule = interpretationLevel === "literal"
       ? "Translate as literally as possible. Stay close to the source wording and structure unless a direct translation would be unclear."
@@ -2083,7 +2291,11 @@ function buildPolishSystemPrompt({
         ? "Translate for intended meaning and the best possible phrasing. Resolve fragmented speech, implied punctuation, and rough wording into the clearest natural translation."
         : "Preserve meaning, names, numbers, and formatting.";
 
-    return `Translate the user's text into ${lang}. ${translationRule} Do not add commentary, alternatives, or extra context. Return exactly one final translation only as plain text. ${dictionaryRule}`;
+    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Examples: 'lag bulletpoints' should become a bullet list, spoken emoji words like 'smilefjes' should become actual emoji, and spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
+    const uncertaintyRule = interpretationLevel === "meaning"
+      ? "If key details are ambiguous, keep the wording general and do not guess specifics."
+      : "";
+    return `Translate the user's text into ${lang}. ${translationRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${selfCorrectionRule} ${uncertaintyRule} ${spokenFormattingRule} Do not add commentary, alternatives, or extra context. Return exactly one final translation only as plain text. ${dictionaryRule}`;
   }
 
   const langRule = `Output language must be ${lang}. Do not translate into any other language.`;
@@ -2103,15 +2315,19 @@ function buildPolishSystemPrompt({
     ? ""
     : "No added greetings/sign-offs unless already present.";
   const singleDraftRule = "Return exactly one final draft only. Never include alternatives, translations, duplicate versions, or placeholders like [Your Name].";
-  const correctionRule = "If user self-corrects (e.g. 'nei, jeg mener', 'eller nei', 'no, I mean'), keep only the final corrected detail and remove superseded earlier versions.";
+  const correctionRule = selfCorrectionRule;
   const fidelityRule = interpretationLevel === "meaning"
     ? "You may infer the intended structure of fragmented speech, but do not invent new facts, topics, names, commitments, or questions that are not grounded in the input."
     : "Do not invent new facts, topics, requests, names, or questions. Rewrite only what is explicitly in the input.";
+  const uncertaintyRule = interpretationLevel === "meaning"
+    ? "If key details are missing or uncertain, keep them open-ended and avoid specific assumptions."
+    : "";
   const recipientRule = mode === "email_body"
     ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
     : "";
+  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. 'lag bulletpoints' -> bullet list output, spoken emoji words like 'smilefjes' -> actual emoji, and spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
 
-  return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${recipientRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
+  return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${uncertaintyRule} ${recipientRule} ${spokenFormattingRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
 
 function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text, interpretationLevel }) {
@@ -2132,6 +2348,7 @@ function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text,
 
   const clean = String(text || "").trim();
   if (!clean) return false;
+  if (hasSpokenFormattingCommandHints(clean)) return false;
   if (clean.length > POLISH_LOCAL_FASTPATH_MAX_CHARS) return false;
   if (countWords(clean) > POLISH_LOCAL_FASTPATH_MAX_WORDS) return false;
   if (/[\n\r]/.test(clean)) return false;
@@ -2507,6 +2724,7 @@ async function handlePolish(body, requestSignal) {
       ? text
       : applySelfCorrections(text);
     const correctedInput = applyDictionaryReplacements(preparedInput, dictionary);
+    const commandAwareInput = applySpokenFormattingPostprocess(correctedInput);
 
     console.log(
       "📨 mode:",
@@ -2550,7 +2768,7 @@ async function handlePolish(body, requestSignal) {
     timings.preprocessMs = Date.now() - requestStartedAt;
 
     let language = lang;
-    let finalText = finalizePolishOutput(correctedInput, {
+    let finalText = finalizePolishOutput(commandAwareInput, {
       style,
       mode,
       interpretationLevel
@@ -2574,11 +2792,11 @@ async function handlePolish(body, requestSignal) {
       try {
         const { response, attempts } = await requestModelDraft({
           system,
-          user: correctedInput,
+          user: commandAwareInput,
           requestSignal,
           maxTokens: resolvePolishMaxTokens(
             mode,
-            correctedInput,
+            commandAwareInput,
             targetLanguageForced,
             interpretationLevel
           ),
@@ -2615,7 +2833,7 @@ async function handlePolish(body, requestSignal) {
             }
           );
 
-          if (hasCriticalTimeDrift(correctedInput, normalizedModelOut)) {
+          if (hasCriticalTimeDrift(commandAwareInput, normalizedModelOut)) {
             usedFallback = true;
             console.warn("⚠️ model changed corrected time; using local fallback.");
           } else if (isLikelyWrongForTarget(normalizedModelOut, lang)) {
@@ -2640,6 +2858,9 @@ async function handlePolish(body, requestSignal) {
       }
     }
 
+    finalText = preserveRequestedBulletLayout(correctedInput, finalText);
+    finalText = preserveRequestedParentheses(commandAwareInput, finalText);
+    finalText = preserveRequestedEmojis(commandAwareInput, finalText);
     timings.totalMs = Date.now() - requestStartedAt;
     const retryCount = Math.max(0, (timings.modelAttempts?.length || 0) - 1);
     console.log(
@@ -2758,6 +2979,7 @@ async function handleRewrite(body, requestSignal) {
       ? "The spoken instruction is very brief. Keep the reply concise and express only that point without elaboration."
       : "";
     const singleDraftRule = "Return exactly one final draft only. Never include alternatives, notes, prefixes, or placeholders.";
+    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. If asked for bullet points, output bullet points. Convert spoken emoji words like 'smilefjes' to actual emoji where appropriate. Apply requested parentheses and remove command words once formatting is applied.";
     const memoryRule = replyMemories.length
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
       : "";
@@ -2798,7 +3020,7 @@ async function handleRewrite(body, requestSignal) {
     const rewriteMaxTokens = draftReplyFromContext
       ? Math.max(OPENAI_MAX_TOKENS_REWRITE, replyContextProfile?.minTokens || 220)
       : OPENAI_MAX_TOKENS_REWRITE;
-    const system = `${taskRule} ${styleRule} ${langRule} ${baseSafetyRule} ${noAssumptionRule} ${concisePointRule} ${singleDraftRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
+    const system = `${taskRule} ${styleRule} ${langRule} ${baseSafetyRule} ${noAssumptionRule} ${concisePointRule} ${singleDraftRule} ${spokenFormattingRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
     const memorySection = replyMemories.length
       ? `\n\nRelevant reply memories:\n${replyMemories.map((memory) => {
         const triggerPart = memory.triggers ? ` (triggers: ${memory.triggers})` : "";
@@ -2836,8 +3058,15 @@ async function handleRewrite(body, requestSignal) {
       explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang)
     );
     finalText = normalizePunctuationArtifacts(
-      applyDictionaryReplacements(finalText, dictionary)
+      applySpokenFormattingPostprocess(
+        applyDictionaryReplacements(finalText, dictionary)
+      )
     ).trim();
+    const rewriteRawFormattingSource = `${instruction}\n${correctedInput}`;
+    const rewriteFormattedSource = applySpokenFormattingPostprocess(rewriteRawFormattingSource);
+    finalText = preserveRequestedBulletLayout(rewriteRawFormattingSource, finalText);
+    finalText = preserveRequestedParentheses(rewriteFormattedSource, finalText);
+    finalText = preserveRequestedEmojis(rewriteFormattedSource, finalText).trim();
     if (!finalText) {
       return { status: 502, json: { error: "Model returned empty text." } };
     }
@@ -2882,7 +3111,15 @@ async function handleRewrite(body, requestSignal) {
         status: 200,
         json: {
           language: effectiveOutputLanguage,
-          text: correctedInput,
+          text: (() => {
+            const rewriteRawFormattingSource = `${instruction}\n${correctedInput}`;
+            const rewriteFormattedSource = applySpokenFormattingPostprocess(rewriteRawFormattingSource);
+            let out = normalizePunctuationArtifacts(applySpokenFormattingPostprocess(correctedInput));
+            out = preserveRequestedBulletLayout(rewriteRawFormattingSource, out);
+            out = preserveRequestedParentheses(rewriteFormattedSource, out);
+            out = preserveRequestedEmojis(rewriteFormattedSource, out);
+            return out;
+          })(),
           appliedStyle: style,
           instruction,
           fallback: true,

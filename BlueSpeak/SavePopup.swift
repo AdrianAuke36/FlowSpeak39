@@ -43,7 +43,7 @@ struct SaveCheckmark: View {
     @State private var opacity: Double = 0
     @State private var offsetY: CGFloat = 6
 
-    private let green = Color(red: 0.20, green: 0.78, blue: 0.35)
+    private let green = Color(nsColor: .systemGreen)
 
     var body: some View {
         VStack {
@@ -139,7 +139,7 @@ struct SaveToastPanelView: View {
 
         var body: some View {
             ZStack {
-                Color(red: 0.05, green: 0.05, blue: 0.08).ignoresSafeArea()
+                AppTheme.canvas.ignoresSafeArea()
 
                 Button("Lagre") { show = true }
                     .buttonStyle(.plain)

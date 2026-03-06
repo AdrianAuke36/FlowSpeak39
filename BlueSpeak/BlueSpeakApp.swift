@@ -1,11 +1,11 @@
 import SwiftUI
 
 @main
-struct FlowLiteApp: App {
+struct BlueSpeakApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Window("FlowSpeak Beta", id: "home") {
+        Window("BlueSpeak Beta", id: "home") {
             HomeView()
         }
         .defaultSize(width: 1160, height: 760)

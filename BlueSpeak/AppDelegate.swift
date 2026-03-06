@@ -593,7 +593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @MainActor
     private func readSelectedTextFromFocusedApp() async -> (PasteboardSnapshot, String) {
         let snapshot = capturePasteboardSnapshot()
-        let sentinel = "__flowspeak_selection__\(UUID().uuidString)"
+        let sentinel = "__bluespeak_selection__\(UUID().uuidString)"
         writeStringToPasteboard(sentinel)
         sendCmdC()
         try? await Task.sleep(nanoseconds: Constants.rewriteCopyDelayNanos)
@@ -932,7 +932,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         button.title = ""
         button.imagePosition = .imageOnly
         button.image = normalStatusImage
-        button.toolTip = "FlowSpeak"
+        button.toolTip = "BlueSpeak"
     }
 
     private func makeMenuItem(title: String, action: Selector?, keyEquivalent: String = "") -> NSMenuItem {
@@ -1317,6 +1317,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func isHomeWindow(_ window: NSWindow) -> Bool {
-        window.identifier?.rawValue == "home" || window.title.contains("FlowSpeak")
+        window.identifier?.rawValue == "home" || window.title.contains("BlueSpeak")
     }
 }

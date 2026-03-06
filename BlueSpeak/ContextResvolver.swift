@@ -379,7 +379,7 @@ final class ContextResolver {
         let lower = candidate.lowercased()
         let blockedTerms = [
             "send", "sende", "subject", "emne", "mottaker", "recipient", "compose", "ny melding",
-            "new message", "sans serif", "flow", "flowspeak", "settings", "home", "continue",
+            "new message", "sans serif", "flow", "bluespeak", "settings", "home", "continue",
             "til", "cc", "bcc", "inbox", "innboks"
         ]
         if blockedTerms.contains(where: { lower == $0 || lower.contains($0) }) {

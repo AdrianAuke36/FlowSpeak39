@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "10150B352F48F0BE009EB17B"
-               BuildableName = "FlowSpeak.app"
-               BlueprintName = "FlowSpeak"
-               ReferencedContainer = "container:FlowSpeak.xcodeproj">
+               BuildableName = "BlueSpeak.app"
+               BlueprintName = "BlueSpeak"
+               ReferencedContainer = "container:BlueSpeak.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -45,9 +45,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "10150B352F48F0BE009EB17B"
-            BuildableName = "FlowSpeak.app"
-            BlueprintName = "FlowSpeak"
-            ReferencedContainer = "container:FlowSpeak.xcodeproj">
+            BuildableName = "BlueSpeak.app"
+            BlueprintName = "BlueSpeak"
+            ReferencedContainer = "container:BlueSpeak.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -62,9 +62,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "10150B352F48F0BE009EB17B"
-            BuildableName = "FlowSpeak.app"
-            BlueprintName = "FlowSpeak"
-            ReferencedContainer = "container:FlowSpeak.xcodeproj">
+            BuildableName = "BlueSpeak.app"
+            BlueprintName = "BlueSpeak"
+            ReferencedContainer = "container:BlueSpeak.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

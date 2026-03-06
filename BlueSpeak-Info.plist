@@ -3,21 +3,21 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.flowspeak.app</string>
-	<key>FlowSpeakBackendBaseURL</key>
+	<string>com.bluespeak.app</string>
+	<key>BlueSpeakBackendBaseURL</key>
 	<string>https://flowspeak39-eu.onrender.com</string>
-	<key>FlowSpeakSupabaseProjectURL</key>
+	<key>BlueSpeakSupabaseProjectURL</key>
 	<string>https://zfvjmcgmgnyrryghriqj.supabase.co</string>
-	<key>FlowSpeakSupabaseAnonKey</key>
+	<key>BlueSpeakSupabaseAnonKey</key>
 	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmdmptY2dtZ255cnJ5Z2hyaXFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwNTU3NDYsImV4cCI6MjA4NzYzMTc0Nn0.iUam9fOCnBBbU8cMic0LcPFFEp7QSW-4i8QrJS3dK3g</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>FlowSpeak bruker mikrofonen for talegjenkjenning</string>
+	<string>BlueSpeak bruker mikrofonen for talegjenkjenning</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>FlowSpeak bruker talegjenkjenning for å transkribere det du sier</string>
+	<string>BlueSpeak bruker talegjenkjenning for å transkribere det du sier</string>
 	<key>NSAccessibilityUsageDescription</key>
-	<string>FlowSpeak bruker accessibility for å sette inn tekst i andre apper</string>
+	<string>BlueSpeak bruker accessibility for å sette inn tekst i andre apper</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>FlowSpeak bruker Apple Events for å lese kontekst fra nettleseren</string>
+	<string>BlueSpeak bruker Apple Events for å lese kontekst fra nettleseren</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

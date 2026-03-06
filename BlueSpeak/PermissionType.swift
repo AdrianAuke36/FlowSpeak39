@@ -19,25 +19,25 @@ enum PermissionType {
         case .speechRecognition:
             return Details(
                 title: "Speech Recognition Permission Required",
-                message: "FlowSpeak needs speech recognition access to turn your voice into text. Enable it in System Settings, then try again.",
+                message: "BlueSpeak needs speech recognition access to turn your voice into text. Enable it in System Settings, then try again.",
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!
             )
         case .microphone:
             return Details(
                 title: "Microphone Permission Required",
-                message: "FlowSpeak needs microphone access to record when you hold fn. Enable it in System Settings, then try again.",
+                message: "BlueSpeak needs microphone access to record when you hold fn. Enable it in System Settings, then try again.",
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
             )
         case .accessibility:
             return Details(
                 title: "Accessibility Permission Required",
-                message: "FlowSpeak needs accessibility access to insert text into apps. Click below to enable it in System Settings.",
+                message: "BlueSpeak needs accessibility access to insert text into apps. Click below to enable it in System Settings.",
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
             )
         case .inputMonitoring:
             return Details(
                 title: "Input Monitoring Required",
-                message: "FlowSpeak needs input monitoring to detect the fn key. Click below to enable it in System Settings.",
+                message: "BlueSpeak needs input monitoring to detect the fn key. Click below to enable it in System Settings.",
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
             )
         }
@@ -181,8 +181,16 @@ struct PermissionView: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: Layout.cornerRadius)
-                .fill(Color(red: 0.1, green: 0.1, blue: 0.12))
-                .shadow(color: .black.opacity(0.5), radius: 30, x: 0, y: 10)
+                .fill(AppTheme.sheetMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Layout.cornerRadius)
+                        .fill(AppTheme.surface.opacity(0.22))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Layout.cornerRadius)
+                        .strokeBorder(AppTheme.border, lineWidth: 1)
+                )
+                .shadow(color: AppTheme.shadow, radius: 16, x: 0, y: 8)
 
             VStack(spacing: 0) {
                 HStack {
@@ -190,9 +198,9 @@ struct PermissionView: View {
                     Button(action: onDismiss) {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.4))
+                            .foregroundStyle(AppTheme.secondaryText)
                             .frame(width: Layout.closeButtonSize, height: Layout.closeButtonSize)
-                            .background(Color.white.opacity(0.08))
+                            .background(AppTheme.surfaceMuted.opacity(0.5))
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -203,21 +211,21 @@ struct PermissionView: View {
                 VStack(spacing: 10) {
                     ZStack {
                         Circle()
-                            .fill(Color.red.opacity(0.15))
+                            .fill(AppTheme.destructive.opacity(0.14))
                             .frame(width: Layout.iconCircleSize, height: Layout.iconCircleSize)
                         Image(systemName: "exclamationmark.circle")
                             .font(.system(size: Layout.iconSize, weight: .semibold))
-                            .foregroundStyle(Color.red.opacity(0.9))
+                            .foregroundStyle(AppTheme.destructive)
                     }
 
                     Text(type.title)
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Color.white.opacity(0.92))
+                        .foregroundStyle(AppTheme.primaryText)
                         .multilineTextAlignment(.center)
 
                     Text(type.message)
                         .font(.system(size: 13))
-                        .foregroundStyle(Color.white.opacity(0.5))
+                        .foregroundStyle(AppTheme.secondaryText)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, Layout.horizontalPadding)
                 }
@@ -227,17 +235,12 @@ struct PermissionView: View {
                 Button(action: onOpenSettings) {
                     Text("Open Settings")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.9))
                         .frame(maxWidth: .infinity)
                         .frame(height: Layout.buttonHeight)
-                        .background(Color.white.opacity(0.1))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderedProminent)
+                .tint(AppTheme.accent)
+                .controlSize(.large)
                 .padding(.horizontal, Layout.horizontalPadding)
                 .padding(.bottom, 20)
             }

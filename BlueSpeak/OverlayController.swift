@@ -213,11 +213,11 @@ struct PillView: View {
     private var accentColor: Color {
         switch mode {
         case .standard:
-            return Color(red: 0.00, green: 0.48, blue: 1.00)
+            return Color(nsColor: .systemBlue)
         case .translation:
-            return Color(red: 0.20, green: 0.78, blue: 0.35)
+            return Color(nsColor: .systemGreen)
         case .rewrite:
-            return Color(red: 1.00, green: 0.23, blue: 0.19)
+            return Color(nsColor: .systemRed)
         }
     }
 
@@ -240,10 +240,10 @@ struct PillView: View {
 
                     if isLocked {
                         Circle()
-                            .fill(Color(red: 1.00, green: 0.23, blue: 0.19))
+                            .fill(Color(nsColor: .systemRed))
                             .frame(width: 11, height: 11)
                             .shadow(
-                                color: Color(red: 1.00, green: 0.23, blue: 0.19).opacity(0.5),
+                                color: Color(nsColor: .systemRed).opacity(0.5),
                                 radius: 5,
                                 x: 0,
                                 y: 0

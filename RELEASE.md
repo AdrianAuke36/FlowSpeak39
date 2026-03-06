@@ -1,33 +1,33 @@
-# FlowSpeak macOS Release Checklist
+# BlueSpeak macOS Release Checklist
 
 ## 1) Build
-- Build Release app from `FlowSpeak.xcodeproj` (`FlowSpeak` scheme).
+- Build Release app from `BlueSpeak.xcodeproj` (`BlueSpeak` scheme).
 - Verify `CFBundleIdentifier`, version, and build number.
 
 ## 2) Sign (Developer ID)
 - Use Apple Developer ID Application certificate.
 - Sign app:
 ```bash
-codesign --deep --force --options runtime --sign "Developer ID Application: <Team Name> (<TEAM_ID>)" "FlowSpeak.app"
+codesign --deep --force --options runtime --sign "Developer ID Application: <Team Name> (<TEAM_ID>)" "BlueSpeak.app"
 ```
 - Verify signature:
 ```bash
-codesign --verify --deep --strict --verbose=2 "FlowSpeak.app"
-spctl --assess --type execute --verbose "FlowSpeak.app"
+codesign --verify --deep --strict --verbose=2 "BlueSpeak.app"
+spctl --assess --type execute --verbose "BlueSpeak.app"
 ```
 
 ## 3) Notarize
 - Zip app:
 ```bash
-ditto -c -k --keepParent "FlowSpeak.app" "FlowSpeak.zip"
+ditto -c -k --keepParent "BlueSpeak.app" "BlueSpeak.zip"
 ```
 - Submit and wait:
 ```bash
-xcrun notarytool submit "FlowSpeak.zip" --keychain-profile "<NOTARY_PROFILE>" --wait
+xcrun notarytool submit "BlueSpeak.zip" --keychain-profile "<NOTARY_PROFILE>" --wait
 ```
 - Staple ticket:
 ```bash
-xcrun stapler staple "FlowSpeak.app"
+xcrun stapler staple "BlueSpeak.app"
 ```
 
 ## 4) Backend Production Gate
@@ -40,10 +40,10 @@ xcrun stapler staple "FlowSpeak.app"
 - Public launch check green (`npm run launch:check -- --url https://api.your-domain.com --token <jwt-or-token> --origin https://flow-speak-direct.lovable.app`)
 
 ## 4.1) App Production Defaults (optional)
-Set these keys in `FlowSpeak/Info.plist` before creating release build:
-- `FlowSpeakBackendBaseURL`
-- `FlowSpeakSupabaseProjectURL`
-- `FlowSpeakSupabaseAnonKey`
+Set these keys in `BlueSpeak/Info.plist` before creating release build:
+- `BlueSpeakBackendBaseURL`
+- `BlueSpeakSupabaseProjectURL`
+- `BlueSpeakSupabaseAnonKey`
 
 This lets users start with production backend/Supabase without manual setup.
 

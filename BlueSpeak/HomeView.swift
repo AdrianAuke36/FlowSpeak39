@@ -12,6 +12,7 @@ struct HomeView: View {
 
     enum Page: CaseIterable, Identifiable {
         case home
+        case history
         case style
         case settings
 
@@ -20,6 +21,7 @@ struct HomeView: View {
         var title: String {
             switch self {
             case .home: return "Home"
+            case .history: return "History"
             case .style: return "Style"
             case .settings: return "Settings"
             }
@@ -28,6 +30,7 @@ struct HomeView: View {
         var iconName: String {
             switch self {
             case .home: return "house.fill"
+            case .history: return "clock.arrow.circlepath"
             case .style: return "textformat"
             case .settings: return "gearshape.fill"
             }
@@ -67,6 +70,8 @@ struct HomeView: View {
         switch activePage {
         case .home:
             MainPage()
+        case .history:
+            HistoryPage()
         case .style:
             StylePage()
         case .settings:
@@ -103,9 +108,9 @@ private enum AuthFlowMode {
     var subtitle: String {
         switch self {
         case .signIn:
-            return "Sign in with your FlowSpeak account to use dictation, translation and rewrite on any Mac."
+            return "Sign in with your BlueSpeak account to use dictation, translation and rewrite on any Mac."
         case .signUp:
-            return "Create a FlowSpeak account with email and password. You can start using the app immediately."
+            return "Create a BlueSpeak account with email and password. You can start using the app immediately."
         }
     }
 
@@ -160,8 +165,8 @@ struct AuthGateView: View {
                                     .foregroundStyle(AppTheme.accentText)
                             )
 
-                        Text("FlowSpeak")
-                            .font(.system(size: 22, weight: .bold, design: .serif))
+                        Text("BlueSpeak")
+                            .font(.system(size: 18, weight: .bold, design: .serif))
                             .foregroundStyle(AppTheme.primaryText)
                     }
 
@@ -187,7 +192,7 @@ struct AuthGateView: View {
 
                 VStack(alignment: .leading, spacing: 16) {
                     Text(mode.title)
-                        .font(.system(size: 42, weight: .bold, design: .serif))
+                        .font(.system(size: 30, weight: .bold, design: .serif))
                         .foregroundStyle(AppTheme.primaryText)
 
                     Text(mode.subtitle)
@@ -260,7 +265,9 @@ struct AuthGateView: View {
                         }
                         .frame(height: 54)
                     }
-                    .buttonStyle(StorePrimaryButtonStyle())
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppTheme.accent)
+                    .controlSize(.large)
                     .disabled(!canSubmit)
                     .opacity(canSubmit ? 1 : 0.65)
 
@@ -504,7 +511,7 @@ struct SetupOnboardingView: View {
                                     .foregroundStyle(AppTheme.primaryText)
                             )
 
-                        Text("FlowSpeak")
+                        Text("BlueSpeak")
                             .font(.system(size: 24, weight: .bold, design: .serif))
                             .foregroundStyle(AppTheme.primaryText)
                     }
@@ -546,29 +553,37 @@ struct SetupOnboardingView: View {
                     HStack(spacing: 12) {
                         if showsPrimaryActionButton {
                             Button(primaryActionTitle, action: primaryAction)
-                                .buttonStyle(OnboardingPrimaryButtonStyle())
+                                .buttonStyle(.borderedProminent)
+                                .tint(AppTheme.accent)
+                                .controlSize(.large)
                         }
 
                         Button("Re-check permissions") {
                             refreshPermissionState()
                         }
-                        .buttonStyle(OnboardingSecondaryButtonStyle())
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
 
                         if showsContinueButton {
                             Button("Continue", action: continueAction)
-                                .buttonStyle(OnboardingPrimaryButtonStyle())
+                                .buttonStyle(.borderedProminent)
+                                .tint(AppTheme.accent)
+                                .controlSize(.large)
                                 .disabled(!canContinue)
                                 .opacity(canContinue ? 1 : 0.45)
                         }
 
                         if showsSkipButton {
                             Button("Skip for now", action: skipCurrentOptionalStep)
-                                .buttonStyle(OnboardingSecondaryButtonStyle())
+                                .buttonStyle(.bordered)
+                                .controlSize(.large)
                         }
 
                         if showsFinishButton {
                             Button("Finish setup", action: finishOnboarding)
-                                .buttonStyle(OnboardingPrimaryButtonStyle())
+                                .buttonStyle(.borderedProminent)
+                                .tint(AppTheme.accent)
+                                .controlSize(.large)
                                 .disabled(!criticalPermissionsGranted)
                                 .opacity(criticalPermissionsGranted ? 1 : 0.45)
                         }
@@ -609,13 +624,13 @@ struct SetupOnboardingView: View {
     private var stepSubtitle: String {
         switch step {
         case .speechRecognition:
-            return "FlowSpeak uses Apple's speech recognition to turn your voice into text. You can skip this now and enable it later."
+            return "BlueSpeak uses Apple's speech recognition to turn your voice into text. You can skip this now and enable it later."
         case .microphone:
-            return "FlowSpeak only activates your microphone when you choose to start dictation. You can skip this now and enable it later."
+            return "BlueSpeak only activates your microphone when you choose to start dictation. You can skip this now and enable it later."
         case .accessibility:
-            return "FlowSpeak needs accessibility access to paste dictation into focused text fields and run rewrite."
+            return "BlueSpeak needs accessibility access to paste dictation into focused text fields and run rewrite."
         case .inputMonitoring:
-            return "FlowSpeak needs input monitoring to detect the fn key globally and trigger dictation shortcuts."
+            return "BlueSpeak needs input monitoring to detect the fn key globally and trigger dictation shortcuts."
         }
     }
 
@@ -888,7 +903,7 @@ struct SetupOnboardingView: View {
                 }
             }
         case .denied, .restricted:
-            statusText = "Enable speech recognition in System Settings, then return to FlowSpeak."
+            statusText = "Enable speech recognition in System Settings, then return to BlueSpeak."
             NSWorkspace.shared.open(speechRecognitionSettingsURL)
         @unknown default:
             statusText = "Unable to verify speech recognition permission."
@@ -967,7 +982,7 @@ struct SetupOnboardingView: View {
             statusText = "Microphone access was denied. Open System Settings to allow it."
             NSWorkspace.shared.open(microphoneSettingsURL)
         case .notDetermined:
-            statusText = "Could not show microphone prompt. Quit and reopen FlowSpeak, then try again."
+            statusText = "Could not show microphone prompt. Quit and reopen BlueSpeak, then try again."
         case .authorized:
             statusText = "Microphone access is ready. Press Continue when you want to move on."
         }
@@ -993,7 +1008,7 @@ struct SetupOnboardingView: View {
             return
         }
 
-        statusText = "Enable FlowSpeak in Privacy & Security, then return here and press Continue."
+        statusText = "Enable BlueSpeak in Privacy & Security, then return here and press Continue."
         NSWorkspace.shared.open(accessibilitySettingsURL)
     }
 
@@ -1009,7 +1024,7 @@ struct SetupOnboardingView: View {
         if granted {
             statusText = "Input Monitoring is ready. Press Continue when you want to move on."
         } else {
-            statusText = "Enable FlowSpeak in Input Monitoring, then return here and press Continue."
+            statusText = "Enable BlueSpeak in Input Monitoring, then return here and press Continue."
             NSWorkspace.shared.open(inputMonitoringSettingsURL)
         }
     }
@@ -1071,13 +1086,13 @@ struct SetupOnboardingView: View {
     private var stepCardDescription: String {
         switch step {
         case .accessibility:
-            return "Turn on FlowSpeak in Privacy & Security. macOS can require relaunch before full access becomes active."
+            return "Turn on BlueSpeak in Privacy & Security. macOS can require relaunch before full access becomes active."
         case .inputMonitoring:
-            return "FlowSpeak uses this only to detect the fn shortcut globally. Turn it on, then continue."
+            return "BlueSpeak uses this only to detect the fn shortcut globally. Turn it on, then continue."
         case .microphone:
-            return "Optional: macOS asks once for microphone access. After you allow it, FlowSpeak can record when you hold fn."
+            return "Optional: macOS asks once for microphone access. After you allow it, BlueSpeak can record when you hold fn."
         case .speechRecognition:
-            return "Optional: macOS asks once for voice transcription. After you allow it, FlowSpeak can use Apple's speech recognition engine."
+            return "Optional: macOS asks once for voice transcription. After you allow it, BlueSpeak can use Apple's speech recognition engine."
         }
     }
 
@@ -1123,66 +1138,21 @@ private extension SetupOnboardingStep {
     }
 }
 
-private struct OnboardingPrimaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 16, weight: .semibold))
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(isEnabled ? AppTheme.accent : AppTheme.border)
-            )
-            .foregroundStyle(isEnabled ? AppTheme.accentText : AppTheme.secondaryText)
-            .opacity(configuration.isPressed ? 0.94 : 1)
-    }
-}
-
-private struct OnboardingSecondaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 14, weight: .semibold))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(AppTheme.surfaceMuted)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
-                    )
-            )
-            .foregroundStyle(isEnabled ? AppTheme.primaryText : AppTheme.secondaryText)
-            .opacity(configuration.isPressed ? 0.92 : 1)
-    }
-}
-
 // MARK: - Sidebar
 
 struct Sidebar: View {
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var history = DictationHistory.shared
     @Binding var activePage: HomeView.Page
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("FlowSpeak")
-                    .font(.system(size: 15, weight: .bold, design: .serif))
-                    .foregroundStyle(AppTheme.primaryText)
+            HStack(spacing: 10) {
+                // Removed RoundedRectangle with waveform.path per instructions
 
-                Text("Beta")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(AppTheme.accentText)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(AppTheme.accent)
-                    )
+                Text("BlueSpeak")
+                    .font(.system(size: 26, weight: .bold, design: .serif))
+                    .foregroundStyle(AppTheme.primaryText)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 18)
@@ -1190,7 +1160,7 @@ struct Sidebar: View {
             Divider()
                 .padding(.bottom, 8)
 
-            ForEach(HomeView.Page.allCases) { page in
+            ForEach(primaryPages) { page in
                 SidebarItem(
                     icon: page.iconName,
                     label: page.title,
@@ -1202,29 +1172,183 @@ struct Sidebar: View {
 
             Spacer()
 
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Snarveier", systemImage: "keyboard")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(AppTheme.primaryText)
-                Label("\(settings.shortcutTriggerKey.compactLabel): Dictate", systemImage: "mic.fill")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(AppTheme.secondaryText)
-                Label("\(settings.shortcutTriggerKey.compactLabel) + Shift: Translate", systemImage: "globe")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(AppTheme.secondaryText)
-                Label("\(settings.shortcutTriggerKey.compactLabel) + Ctrl: Rewrite", systemImage: "wand.and.stars")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(AppTheme.secondaryText)
-                Label("\(settings.shortcutTriggerKey.compactLabel) + <: Save reply", systemImage: "tray.and.arrow.down.fill")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(AppTheme.secondaryText)
+            if subscriptionPlan == .free {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Free plan")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(AppTheme.primaryText)
+
+                        Spacer()
+
+                        Text(wordsLeftLabel)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(AppTheme.secondaryText)
+                            .lineLimit(1)
+                    }
+
+                    ProgressView(value: freeUsageProgress)
+                        .progressViewStyle(.linear)
+                        .tint(AppTheme.warning)
+
+                    HStack(spacing: 8) {
+                        Text("\(displayedWordsUsedToday)/\(Self.freeDailyWordLimit) words today")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(AppTheme.secondaryText)
+
+                        Spacer()
+
+                        Button("Upgrade") {
+                            openUpgradePage()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .tint(AppTheme.accent)
+                    }
+                }
+                .padding(.all, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(AppTheme.fieldMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(AppTheme.surfaceMuted.opacity(0.28))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(AppTheme.border, lineWidth: 1)
+                        )
+                )
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
             }
-            .padding(12)
-            .appCard(fill: AppTheme.surfaceMuted)
-            .padding(12)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Tips")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(AppTheme.primaryText)
+
+                Text("• Hold \(settings.shortcutTriggerKey.compactLabel) to dictate")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AppTheme.secondaryText)
+
+                Text("• \(settings.shortcutTriggerKey.compactLabel) + Shift to translate")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AppTheme.secondaryText)
+
+                Text("• \(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+            .padding(.all, 20)
+            .frame(minHeight: 160)
+            .background(
+                RoundedRectangle(cornerRadius: 17)
+                    .fill(AppTheme.fieldMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 17)
+                            .fill(AppTheme.surfaceMuted.opacity(0.28))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 17)
+                            .strokeBorder(AppTheme.border, lineWidth: 1)
+                    )
+            )
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+
+            SidebarItem(
+                icon: HomeView.Page.settings.iconName,
+                label: HomeView.Page.settings.title,
+                active: activePage == .settings
+            ) {
+                activePage = .settings
+            }
+            .padding(.bottom, 12)
         }
-        .frame(width: 190)
-        .background(AppTheme.sidebar)
+        .frame(width: 220)
+        .background(
+            Rectangle()
+                .fill(AppTheme.sidebarMaterial)
+                .overlay(
+                    Rectangle()
+                        .fill(AppTheme.sidebar.opacity(0.5))
+                )
+        )
+    }
+
+    private var primaryPages: [HomeView.Page] {
+        HomeView.Page.allCases.filter { $0 != .settings }
+    }
+
+    private enum SubscriptionPlan {
+        case free
+        case paid
+    }
+
+    private static let freeDailyWordLimit = 3000
+
+    private var subscriptionPlan: SubscriptionPlan {
+        switch normalizedPlanClaim {
+        case "pro", "team", "enterprise", "paid":
+            return .paid
+        default:
+            return .free
+        }
+    }
+
+    private var normalizedPlanClaim: String {
+        guard let payload = jwtPayload(from: settings.backendToken),
+              let rawPlan = payload["plan"] as? String else {
+            return "free"
+        }
+        return rawPlan.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var displayedWordsUsedToday: Int {
+        min(history.todayWordCount, Self.freeDailyWordLimit)
+    }
+
+    private var freeWordsRemaining: Int {
+        max(0, Self.freeDailyWordLimit - history.todayWordCount)
+    }
+
+    private var freeUsageProgress: Double {
+        guard Self.freeDailyWordLimit > 0 else { return 0 }
+        return min(max(Double(history.todayWordCount) / Double(Self.freeDailyWordLimit), 0), 1)
+    }
+
+    private var wordsLeftLabel: String {
+        freeWordsRemaining == 0
+            ? "0 left today"
+            : "\(freeWordsRemaining) left today"
+    }
+
+    private func openUpgradePage() {
+        guard let url = URL(string: "https://flow-speak-direct.lovable.app") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func jwtPayload(from token: String) -> [String: Any]? {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 2 else { return nil }
+
+        var base64 = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+
+        let padding = (4 - (base64.count % 4)) % 4
+        if padding > 0 {
+            base64 += String(repeating: "=", count: padding)
+        }
+
+        guard let payloadData = Data(base64Encoded: base64),
+              let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+            return nil
+        }
+
+        return payload
     }
 }
 
@@ -1236,24 +1360,24 @@ struct SidebarItem: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 13))
-                    .frame(width: 16)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 18)
                 Text(label)
-                    .font(.system(size: 13, weight: active ? .semibold : .regular))
+                    .font(.system(size: 16, weight: active ? .semibold : .medium))
                 Spacer()
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 10)
                     .fill(active ? AppTheme.accentSoft : Color.clear)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .foregroundColor(active ? AppTheme.accent : AppTheme.secondaryText)
     }
 }
@@ -1322,22 +1446,13 @@ struct StylePage: View {
                 .padding(.top, 28)
                 .padding(.bottom, 18)
 
-            HStack(spacing: 20) {
+            Picker("Style scope", selection: $selectedScope) {
                 ForEach(StyleScope.allCases) { scope in
-                    Button(action: { selectedScope = scope }) {
-                        VStack(spacing: 8) {
-                            Text(scope.title)
-                                .font(.system(size: 13, weight: selectedScope == scope ? .semibold : .medium))
-                                .foregroundColor(selectedScope == scope ? AppTheme.primaryText : AppTheme.secondaryText)
-                            Rectangle()
-                                .fill(selectedScope == scope ? AppTheme.accent : Color.clear)
-                                .frame(height: 2)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    Text(scope.title).tag(scope)
                 }
-                Spacer()
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(.horizontal, 28)
             .padding(.bottom, 12)
 
@@ -1403,7 +1518,11 @@ struct StyleOptionCard: View {
             .frame(height: 248)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(AppTheme.surface)
+                    .fill(AppTheme.cardMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(AppTheme.surface.opacity(0.2))
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
                             .strokeBorder(
@@ -1432,57 +1551,62 @@ struct MainPage: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack(alignment: .top) {
-                Text(welcomeTitle)
-                    .font(.system(size: 20, weight: .bold, design: .serif))
-                    .foregroundStyle(AppTheme.primaryText)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(welcomeTitle)
+                        .font(.system(size: 40, weight: .bold, design: .serif))
+                        .foregroundStyle(AppTheme.primaryText)
 
-                Spacer()
+                    HStack(spacing: 8) {
+                        Text("Press")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(AppTheme.secondaryText)
 
-                // Stats
-                HStack(spacing: 6) {
-                    StatPill(icon: "🔥", value: streakLabel)
-                    StatPill(icon: "🚀", value: "\(history.todayWordCount) ord")
-                    StatPill(icon: "📝", value: "\(history.todayEntries.count) dikteringer")
-                    StatPill(icon: "🌿", value: "1% klimabidrag")
+                        Text(settings.shortcutTriggerKey.compactLabel)
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .foregroundStyle(AppTheme.primaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(AppTheme.surface)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .strokeBorder(AppTheme.border, lineWidth: 1)
+                                    )
+                            )
+
+                        Text("to dictate anywhere.")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    SimpleStatCard(title: "Day streak", value: streakLabel)
+                    SimpleStatCard(title: "Words today", value: "\(history.todayWordCount)")
+                    SimpleStatCard(title: "Words total", value: "\(history.wordCount)")
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Recent transcriptions")
+                        .font(.system(size: 30, weight: .bold, design: .serif))
+                        .foregroundStyle(AppTheme.primaryText)
+
+                    if recentEntries.isEmpty {
+                        Text("No transcriptions yet.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(AppTheme.secondaryText)
+                            .padding(.top, 6)
+                    } else {
+                        HistoryListCard(entries: recentEntries)
+                    }
                 }
             }
             .padding(.horizontal, 28)
             .padding(.top, 28)
-            .padding(.bottom, 16)
-
-            // History header
-            Text("I DAG")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(AppTheme.secondaryText)
-                .kerning(1.5)
-                .padding(.horizontal, 28)
-                .padding(.bottom, 8)
-
-            // History list
-            if history.todayEntries.isEmpty {
-                VStack(spacing: 8) {
-                    Text("🎙")
-                        .font(.system(size: 32))
-                    Text("Ingen dikteringer i dag enda")
-                        .font(.system(size: 13))
-                        .foregroundColor(AppTheme.secondaryText)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(Array(history.todayEntries.enumerated()), id: \.element.id) { i, entry in
-                            HistoryRow(entry: entry, isLast: i == history.todayEntries.count - 1)
-                        }
-                    }
-                    .cardSurface()
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 20)
-                }
-            }
+            .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(AppTheme.canvas)
@@ -1490,35 +1614,92 @@ struct MainPage: View {
 
     private var streakLabel: String {
         let days = history.entries.isEmpty ? 0 : 1
-        return "\(days) dag"
+        return "\(days) day"
+    }
+
+    private var recentEntries: [DictationEntry] {
+        Array(history.entries.prefix(5))
     }
 
     private var welcomeTitle: String {
         let name = settings.greetingDisplayName
         if name.isEmpty {
-            return "Velkommen tilbake"
+            return "Welcome back"
         }
-        return "Velkommen tilbake, \(name)"
+        return "Welcome back, \(name)"
     }
 }
 
-struct StatPill: View {
-    let icon: String
+struct HistoryPage: View {
+    @ObservedObject private var history = DictationHistory.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("History")
+                    .font(.system(size: 34, weight: .bold, design: .serif))
+                    .foregroundStyle(AppTheme.primaryText)
+
+                if history.entries.isEmpty {
+                    Text("No transcriptions yet.")
+                        .font(.system(size: 14))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .padding(.top, 6)
+                } else {
+                    HistoryListCard(entries: history.entries)
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 28)
+            .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(AppTheme.canvas)
+    }
+}
+
+struct SimpleStatCard: View {
+    let title: String
     let value: String
 
     var body: some View {
-        HStack(spacing: 4) {
-            Text(icon).font(.system(size: 11))
-            Text(value).font(.system(size: 11, weight: .medium))
+        VStack(alignment: .leading, spacing: 6) {
+            Text(value)
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(AppTheme.primaryText)
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(AppTheme.secondaryText)
+                .lineLimit(1)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Capsule()
-                .fill(AppTheme.surface)
-                .overlay(Capsule().strokeBorder(AppTheme.border, lineWidth: 1))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(AppTheme.cardMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(AppTheme.surface.opacity(0.2))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(AppTheme.border, lineWidth: 1)
+                )
         )
-        .foregroundColor(AppTheme.primaryText)
+    }
+}
+
+struct HistoryListCard: View {
+    let entries: [DictationEntry]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                HistoryRow(entry: entry, isLast: index == entries.count - 1)
+            }
+        }
+        .cardSurface()
     }
 }
 
@@ -1648,12 +1829,16 @@ private struct CardSurfaceModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(AppTheme.surface)
+                .fill(AppTheme.cardMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(AppTheme.surface.opacity(0.2))
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .strokeBorder(AppTheme.border, lineWidth: 1)
                 )
-                .shadow(color: AppTheme.shadow, radius: 10, x: 0, y: 6)
+                .shadow(color: AppTheme.shadow, radius: 8, x: 0, y: 4)
         )
     }
 }
