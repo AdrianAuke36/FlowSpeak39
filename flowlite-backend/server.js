@@ -2178,12 +2178,41 @@ function isBrowserBundle(bundleId) {
     || bundleId === "org.mozilla.firefox";
 }
 
-function inferMode(requestedMode, bundleId, url, ctx, fieldMeta) {
+function looksLikeEmailBodyText(text) {
+  const raw = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!raw) return false;
+
+  const normalized = raw.toLowerCase();
+  const lines = raw
+    .split("\n")
+    .map((line) => String(line || "").trim())
+    .filter(Boolean);
+  if (!lines.length) return false;
+
+  const firstLine = lines[0] || "";
+  const firstTwo = lines.slice(0, 2).join("\n");
+  const hasGreeting = /^(hei|hello|hi|dear|kjære)\b/i.test(firstLine) || /(^|\n)\s*(hei|hello|hi|dear|kjære)\b/i.test(firstTwo);
+  const hasSignoff = /\b(med vennlig hilsen|vennlig hilsen|hilsen|mvh|best regards|kind regards|regards|sincerely)\b/i.test(normalized);
+  const hasHeaderLine = lines.slice(0, 8).some((line) => /^(fra|from|til|to|emne|subject|cc|bcc)\s*:/i.test(line));
+  const hasEmailAddress = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(raw);
+  const hasThreadSubject = /^(re|sv|fw|fwd)\s*:/i.test(firstLine);
+  const paragraphCount = raw.split(/\n{2,}/).map((chunk) => chunk.trim()).filter(Boolean).length;
+
+  if (hasSignoff) return true;
+  if (hasHeaderLine && (hasEmailAddress || lines.length >= 3)) return true;
+  if (hasGreeting && (paragraphCount >= 2 || hasEmailAddress || lines.length >= 3)) return true;
+  if (hasThreadSubject && (hasEmailAddress || hasGreeting || hasSignoff)) return true;
+
+  return false;
+}
+
+function inferMode(requestedMode, bundleId, url, ctx, fieldMeta, text) {
   const mode = String(requestedMode || "generic");
   const lowerBundle = String(bundleId || "").toLowerCase();
   const lowerUrl = String(url || "").toLowerCase();
   const lowerCtx = String(ctx || "").toLowerCase();
   const lowerMeta = String(fieldMeta || "").toLowerCase();
+  const looksEmailByContent = looksLikeEmailBodyText(text);
   const blob = `${lowerBundle} ${lowerUrl} ${lowerCtx} ${lowerMeta}`;
 
   const subjectHints = ["subject", "emne", "tema", "betreff", "title"];
@@ -2200,12 +2229,19 @@ function inferMode(requestedMode, bundleId, url, ctx, fieldMeta) {
 
   if (mode === "email_body" || mode === "email_subject") {
     // Safety net: if client misclassifies a browser field as email, downgrade to generic.
-    if (isBrowserBundle(bundleId) && !isMailUrl && !hasStrongEmailHint) {
+    if (isBrowserBundle(bundleId) && !isMailUrl && !hasStrongEmailHint && !looksEmailByContent) {
       return "generic";
     }
     return mode;
   }
-  if (mode !== "generic") return mode;
+  if (mode !== "generic") {
+    if (looksEmailByContent) return "email_body";
+    return mode;
+  }
+
+  if (looksEmailByContent) {
+    return "email_body";
+  }
 
   const emailHints = [
     "gmail", "mail.google.com", "outlook",
@@ -2526,8 +2562,7 @@ function classifyDraftReplyContext(text) {
 
   const looksLikeInvitation = /\b(bryllup|wedding|invitation|invite|rsvp|ceremony|ceremoni|feiring)\b/.test(normalized);
   const looksLikeSupport = /\b(bestilling|ordre|order|ordrenummer|tracking|shipment|delivery|levering|mottatt|received|refund|support|kundeservice|status|pakke)\b/.test(normalized);
-  const looksLikeEmail = /(^|\n)\s*(hei|hello|dear|kjære)\b/i.test(raw) ||
-    /\b(med vennlig hilsen|best regards|kind regards|vennlig hilsen)\b/.test(normalized) ||
+  const looksLikeEmail = looksLikeEmailBodyText(raw) ||
     /\b(takk for at du handler|thank you for your order|we confirm that we have received your order)\b/.test(normalized);
 
   if (looksLikeSupport) {
@@ -2681,6 +2716,14 @@ function normalizeDraftReplyInstruction(instruction) {
   return trimmed;
 }
 
+function instructionRequestsEmailForm(instruction) {
+  const normalized = String(instruction || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  const hasEmailWord = /\b(e-?post|email|mail)\b/.test(normalized);
+  const hasComposeWord = /\b(svar|svare|reply|respond|draft|skriv|write)\b/.test(normalized);
+  return hasEmailWord && hasComposeWord;
+}
+
 function escapeRegExp(value) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -2718,7 +2761,7 @@ async function handlePolish(body, requestSignal) {
     const axTitle = String(body?.axTitle || "");
     const axPlaceholder = String(body?.axPlaceholder || "");
     const fieldMeta = [appName, axDescription, axHelp, axTitle, axPlaceholder].join(" ");
-    const mode = inferMode(requestedMode, bundleId, url, ctx, fieldMeta);
+    const mode = inferMode(requestedMode, bundleId, url, ctx, fieldMeta, text);
     const dictionary = getRequestDictionary(body);
     const preparedInput = interpretationLevel === "literal"
       ? text
@@ -2920,6 +2963,7 @@ async function handleRewrite(body, requestSignal) {
   let draftReplyFromContext = false;
   let replyMemories = [];
   let requestedRewriteMode = "generic";
+  let effectiveRewriteMode = "generic";
   let emailReplyGreetingMode = "firstName";
   let emailReplySignoffMode = "autoName";
   let emailReplySignoffText = "";
@@ -2953,6 +2997,15 @@ async function handleRewrite(body, requestSignal) {
     emailRecipientHint = String(body?.emailRecipientHint || "").trim();
     const dictionary = getRequestDictionary(body);
     correctedInput = applyDictionaryReplacements(applySelfCorrections(text), dictionary);
+    effectiveRewriteMode = (
+      requestedRewriteMode === "email_body" || requestedRewriteMode === "email_subject"
+    )
+      ? requestedRewriteMode
+      : (
+          looksLikeEmailBodyText(correctedInput) || instructionRequestsEmailForm(instruction)
+            ? "email_body"
+            : requestedRewriteMode
+        );
     if (draftReplyFromContext) {
       instruction = normalizeDraftReplyInstruction(instruction);
     }
@@ -2983,7 +3036,7 @@ async function handleRewrite(body, requestSignal) {
     const memoryRule = replyMemories.length
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
       : "";
-    const isEmailReplyMode = requestedRewriteMode === "email_body" || requestedRewriteMode === "email_subject";
+    const isEmailReplyMode = effectiveRewriteMode === "email_body" || effectiveRewriteMode === "email_subject";
     const baseEmailReplyMeta = (draftReplyFromContext || isEmailReplyMode)
       ? extractEmailReplyMetadata(correctedInput)
       : { senderDisplayName: "", greetingName: "" };
@@ -3016,7 +3069,9 @@ async function handleRewrite(body, requestSignal) {
       : "";
     const taskRule = draftReplyFromContext
       ? `Draft a complete send-ready reply to the provided incoming message context. The provided text is the message being answered, not the draft to rewrite. Use the incoming message plus the spoken instruction to write the full response the user should send. ${replyContextProfile?.extraRule || ""} ${isEmailReplyMode ? `The user is writing inside an email field, so format the output as an actual email reply body, not a chat reply. ${greetingRule} ${signoffRule}` : ""} Be polite, context-aware, and useful. Do not simply restate the spoken instruction, and do not return only a short fragment.`
-      : "Apply the user instruction to the provided text.";
+      : isEmailReplyMode
+        ? `Apply the user instruction to the provided text and keep the result in clear email format (not chat format). ${greetingRule} ${signoffRule}`
+        : "Apply the user instruction to the provided text.";
     const rewriteMaxTokens = draftReplyFromContext
       ? Math.max(OPENAI_MAX_TOKENS_REWRITE, replyContextProfile?.minTokens || 220)
       : OPENAI_MAX_TOKENS_REWRITE;
@@ -3087,6 +3142,7 @@ async function handleRewrite(body, requestSignal) {
       json: {
         language: effectiveOutputLanguage,
         text: finalText,
+        appliedMode: effectiveRewriteMode,
         appliedStyle: style,
         instruction,
         timings: {
@@ -3115,11 +3171,15 @@ async function handleRewrite(body, requestSignal) {
             const rewriteRawFormattingSource = `${instruction}\n${correctedInput}`;
             const rewriteFormattedSource = applySpokenFormattingPostprocess(rewriteRawFormattingSource);
             let out = normalizePunctuationArtifacts(applySpokenFormattingPostprocess(correctedInput));
+            if (effectiveRewriteMode === "email_body") {
+              out = normalizeEmailBody(out);
+            }
             out = preserveRequestedBulletLayout(rewriteRawFormattingSource, out);
             out = preserveRequestedParentheses(rewriteFormattedSource, out);
             out = preserveRequestedEmojis(rewriteFormattedSource, out);
             return out;
           })(),
+          appliedMode: effectiveRewriteMode,
           appliedStyle: style,
           instruction,
           fallback: true,
