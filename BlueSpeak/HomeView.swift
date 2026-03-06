@@ -1223,34 +1223,26 @@ struct Sidebar: View {
                 .padding(.bottom, 10)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("Tips")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(AppTheme.primaryText)
 
-                Text("• Hold \(settings.shortcutTriggerKey.compactLabel) to dictate")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(AppTheme.secondaryText)
-
-                Text("• \(settings.shortcutTriggerKey.compactLabel) + Shift to translate")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(AppTheme.secondaryText)
-
-                Text("• \(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(AppTheme.secondaryText)
+                tipRow(icon: "mic.fill", text: "Hold \(settings.shortcutTriggerKey.compactLabel) to dictate")
+                tipRow(icon: "globe", text: "\(settings.shortcutTriggerKey.compactLabel) + Shift to translate")
+                tipRow(icon: "wand.and.stars", text: "\(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite")
             }
-            .padding(.all, 20)
-            .frame(minHeight: 160)
+            .padding(.all, 12)
+            .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
             .background(
-                RoundedRectangle(cornerRadius: 17)
+                RoundedRectangle(cornerRadius: 14)
                     .fill(AppTheme.fieldMaterial)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 17)
+                        RoundedRectangle(cornerRadius: 14)
                             .fill(AppTheme.surfaceMuted.opacity(0.28))
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 17)
+                        RoundedRectangle(cornerRadius: 14)
                             .strokeBorder(AppTheme.border, lineWidth: 1)
                     )
             )
@@ -1327,6 +1319,24 @@ struct Sidebar: View {
     private func openUpgradePage() {
         guard let url = URL(string: "https://flow-speak-direct.lovable.app") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    @ViewBuilder
+    private func tipRow(icon: String, text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(AppTheme.accent)
+                .frame(width: 12, alignment: .center)
+
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(AppTheme.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 0)
+        }
     }
 
     private func jwtPayload(from token: String) -> [String: Any]? {

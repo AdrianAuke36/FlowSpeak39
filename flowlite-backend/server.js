@@ -1457,6 +1457,77 @@ function isLikelyPersonNameToken(value) {
 
 const WEEKDAY_TOKEN_PATTERN = "(?:mandag|tirsdag|onsdag|torsdag|fredag|lørdag|laurdag|søndag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)";
 
+function normalizeListItemToken(value) {
+  let token = String(value || "")
+    .toLowerCase()
+    .replace(/\r\n/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+  if (!token) return "";
+
+  token = token
+    .replace(/^[\-•*]\s*/, "")
+    .replace(/^(?:og|and)\s+/i, "")
+    .replace(/^(?:til\s+[a-zæøå][a-zæøå\-']{1,24})\s+(?:trenger|må\s+ha|need|we\s+need)\s+/i, "")
+    .replace(/^(?:vi\s+)?(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|need|we\s+need|buy|get)\s+/i, "")
+    .replace(/[.,;:!?]+$/g, "")
+    .trim();
+
+  return token;
+}
+
+function applyListNegationCorrections(text) {
+  let out = String(text || "");
+  if (!out) return out;
+  if (!/(?:nei|no)\s+(?:ikke|not)\b/i.test(out)) return out;
+
+  const clauses = out.split(/\s*,\s*/);
+  if (clauses.length < 2) return out;
+
+  const kept = [...clauses];
+  let changed = false;
+  const negationPattern = /^(?:men\s+)?(?:eh+|ehm+|øh+|øhm+|uh+|uhm+|um+|umm+)?\s*(?:nei|no)\s+(?:ikke|not)\s+(.+)$/i;
+
+  for (let i = 0; i < kept.length; i += 1) {
+    const clause = String(kept[i] || "").trim();
+    const match = clause.match(negationPattern);
+    if (!match?.[1]) continue;
+
+    const target = normalizeListItemToken(match[1]);
+    if (!target) {
+      kept[i] = "";
+      changed = true;
+      continue;
+    }
+
+    for (let j = i - 1; j >= 0; j -= 1) {
+      if (normalizeListItemToken(kept[j]) === target) {
+        kept[j] = "";
+        changed = true;
+        break;
+      }
+    }
+
+    kept[i] = "";
+    changed = true;
+  }
+
+  if (!changed) return out;
+
+  out = kept
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join(", ");
+
+  out = out
+    .replace(/\s+([,.;!?])/g, "$1")
+    .replace(/([,;]){2,}/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+  return out;
+}
+
 function applyInlineNoCorrections(text) {
   let out = String(text || "");
   if (!out) return out;
@@ -1485,6 +1556,7 @@ function applyInlineNoCorrections(text) {
     "ig"
   );
   out = out.replace(weekdayCorrectionPattern, (_, __oldValue, newValue) => String(newValue).trim());
+  out = applyListNegationCorrections(out);
 
   return out;
 }
@@ -1649,10 +1721,15 @@ function normalizeEmailLineCasingAndPunctuation(text) {
       continue;
     }
 
-    if (previousLineWasSignoff && isLikelyNameLine(trimmed)) {
-      out.push(capitalizeFirstLetter(trimmed.replace(/[,.;:!?]+$/g, "")));
-      previousLineWasSignoff = false;
-      continue;
+    if (previousLineWasSignoff) {
+      const strippedNameCandidate = trimmed
+        .replace(/^[,.;:!?\-–—\s]+/g, "")
+        .trim();
+      if (isLikelyNameLine(strippedNameCandidate)) {
+        out.push(capitalizeFirstLetter(strippedNameCandidate.replace(/[,.;:!?]+$/g, "")));
+        previousLineWasSignoff = false;
+        continue;
+      }
     }
 
     let normalized = capitalizeFirstLetter(trimmed);
@@ -1849,6 +1926,7 @@ function normalizePunctuationArtifacts(text) {
 
 const BULLET_COMMAND_PREFIX_RE = /^\s*(?:(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\s+(?:dette\s+)?(?:som\s+)?(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)|(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste))\s*[:,-]?\s*/i;
 const BULLET_COMMAND_HINT_RE = /\b(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\b[\s\S]{0,48}\b(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)\b/i;
+const BULLET_IMPLICIT_LIST_TRIGGER_RE = /\b(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|handleliste|ingredienser|we\s+need|need|shopping\s+list|buy|get)\b/i;
 const POINT_MARKER_RE = /\b(?:punkt|point)\s*(?:\d+|en|ett|to|tre|fire|fem|seks|sju|syv|åtte|ni|ti|one|two|three|four|five|six|seven|eight|nine|ten)\s*[:.)-]?\s*/ig;
 const PARENTHESIS_COMMAND_RE = /\b(?:åpen|open|start|venstre|left)\s+parentes\b|\b(?:lukk|lukk|slutt|close|høyre|right)\s+parentes\b|\b(?:i\s+parentes|in\s+parentheses)\b/i;
 const SPOKEN_EMOJI_ALIASES = [
@@ -1908,6 +1986,61 @@ function splitBulletItems(content) {
     .filter(Boolean);
 }
 
+function stripListLeadPhrases(text) {
+  let out = String(text || "").trim();
+  if (!out) return out;
+
+  out = out.replace(
+    /^\s*(?:til\s+[^\s,.;:!?]+(?:\s+[^\s,.;:!?]+){0,2}\s+)?(?:trenger\s+vi|vi\s+trenger|we\s+need|need|kjøp|buy|get|handleliste(?:n)?|ingredienser(?:\s+til\s+[^\s,.;:!?]+)?)\s+/i,
+    ""
+  );
+  out = out.replace(/\b(?:vi\s+trenger|trenger\s+vi|we\s+need|need)\b/ig, ", ");
+  return out.trim();
+}
+
+function isLikelySimpleListItem(text) {
+  const value = String(text || "").trim().toLowerCase();
+  if (!value) return false;
+
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length < 1 || words.length > 4) return false;
+  if (/^(?:å|to|ellers|if|hvis|fordi)\b/.test(value)) return false;
+  if (/^(?:jeg|vi|du|dere|han|hun|de|it|we|you|they)\b/.test(value)) return false;
+  if (/\b(?:er|blir|ble|skal|må|kan|kunne|vil|ville|har|hadde|får|fikk|is|are|was|were|be|being|have|has|had|will|would|should|could)\b/.test(value)) {
+    return false;
+  }
+  return true;
+}
+
+function buildImplicitBulletList(text) {
+  const source = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!source) return "";
+  if (/^\s*[-•*]\s+/m.test(source)) return "";
+  if (hasExplicitBulletCommand(source)) return "";
+  if (!BULLET_IMPLICIT_LIST_TRIGGER_RE.test(source)) return "";
+
+  const candidate = stripListLeadPhrases(source);
+  const normalizedItems = splitBulletItems(candidate)
+    .map((item) => normalizeListItemToken(item))
+    .filter(Boolean);
+
+  const uniqueItems = [];
+  const seen = new Set();
+  for (const item of normalizedItems) {
+    if (seen.has(item)) continue;
+    seen.add(item);
+    uniqueItems.push(item);
+  }
+
+  if (uniqueItems.length < 2) return "";
+
+  const simpleItems = uniqueItems.filter((item) => isLikelySimpleListItem(item));
+  if (simpleItems.length < 2) return "";
+  if (simpleItems.length < Math.ceil(uniqueItems.length * 0.6)) return "";
+
+  return simpleItems.map((item) => `- ${capitalizeFirstLetter(item)}`).join("\n");
+}
+
 function applyBulletFormattingCommand(text) {
   const source = String(text || "").replace(/\r\n/g, "\n").trim();
   if (!source) return source;
@@ -1962,7 +2095,13 @@ function applySpokenFormattingPostprocess(text) {
   let out = String(text || "");
   if (!out) return out;
 
-  out = applyBulletFormattingCommand(out);
+  const explicitBullet = applyBulletFormattingCommand(out);
+  if (explicitBullet !== out) {
+    out = explicitBullet;
+  } else {
+    const implicitBullet = buildImplicitBulletList(out);
+    if (implicitBullet) out = implicitBullet;
+  }
   out = applySpokenParenthesisCommands(out);
   out = replaceSpokenEmojiAliases(out);
   return out;
@@ -2004,12 +2143,22 @@ function preserveRequestedBulletLayout(sourceText, outputText) {
   const source = String(sourceText || "").trim();
   let out = String(outputText || "").trim();
   if (!source || !out) return out;
-  if (!hasExplicitBulletCommand(source)) return out;
+
+  const hasExplicit = hasExplicitBulletCommand(source);
+  const implicitFromSource = hasExplicit ? "" : buildImplicitBulletList(source);
+  if (!hasExplicit && !implicitFromSource) return out;
   if (/^\s*[-•*]\s+/m.test(out)) return out;
 
-  const fromSource = applyBulletFormattingCommand(source);
-  if (fromSource && fromSource !== source) {
-    out = fromSource;
+  if (hasExplicit) {
+    const fromSource = applyBulletFormattingCommand(source);
+    if (fromSource && fromSource !== source) {
+      out = fromSource;
+    }
+    return out;
+  }
+
+  if (implicitFromSource) {
+    out = implicitFromSource;
   }
   return out;
 }
@@ -2318,7 +2467,7 @@ function buildPolishSystemPrompt({
   targetLanguageForced,
   interpretationLevel
 }) {
-  const selfCorrectionRule = "Self-correction precedence: if the user revises themselves (for example 'torsdag ... nei fredag', 'eh nei', 'nei, jeg mener', 'no, I mean'), keep only the latest corrected detail. Remove superseded alternatives, false starts, and correction cue words.";
+  const selfCorrectionRule = "Self-correction precedence: if the user revises themselves (for example 'torsdag ... nei fredag', 'eh nei', 'nei, jeg mener', 'no, I mean', or 'melk, nei ikke melk'), keep only the latest corrected detail and remove negated items. Remove superseded alternatives, false starts, and correction cue words.";
 
   if (targetLanguageForced) {
     const translationRule = interpretationLevel === "literal"
