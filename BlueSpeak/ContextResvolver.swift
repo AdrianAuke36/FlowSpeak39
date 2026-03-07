@@ -82,6 +82,20 @@ final class ContextResolver {
         )
     }
 
+    /// Attempts to read the full text value of the currently focused writable element.
+    /// Used as a rewrite fallback when no selection is available.
+    func focusedTextForRewrite(maxLength: Int = 9000) -> String? {
+        guard maxLength > 0 else { return nil }
+        guard let focused = focusedElement() else { return nil }
+
+        let rawValue = copyStringAttr(focused, kAXValueAttribute)
+        let trimmed = (rawValue ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        return clipForRewriteInput(trimmed, maxLength: maxLength)
+    }
+
     func draftMode(for ctx: FieldContext) -> DraftMode {
         switch ctx.bundleId {
         case "com.openai.chatgpt":          return .chatMessage
@@ -444,5 +458,21 @@ final class ContextResolver {
             return String(s.suffix(maxLength))
         }
         return nil
+    }
+
+    private func clipForRewriteInput(_ text: String, maxLength: Int) -> String {
+        guard text.count > maxLength else { return text }
+        if maxLength < 120 {
+            return String(text.prefix(maxLength))
+        }
+
+        let separator = "\n...\n"
+        let available = max(1, maxLength - separator.count)
+        let headCount = Int(Double(available) * 0.70)
+        let tailCount = max(1, available - headCount)
+
+        let head = String(text.prefix(headCount))
+        let tail = String(text.suffix(tailCount))
+        return head + separator + tail
     }
 }

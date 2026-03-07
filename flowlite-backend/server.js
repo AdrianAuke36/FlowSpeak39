@@ -2964,6 +2964,20 @@ function normalizeDraftReplyInstruction(instruction) {
   const trimmed = String(instruction || "").replace(/\s+/g, " ").trim();
   if (!trimmed) return trimmed;
 
+  // Treat short "summarize" commands as summarization tasks, not literal reply points.
+  const summaryKeyword = /\b(oppsummer(?:ing)?|oppsumer(?:ing)?|summarize|summarise|summary|sum up|tl;dr|tldr)\b/i;
+  const summaryFormattingHint = /\b(punkt|punkter|bullet|liste|list)\b/i;
+  const summaryCommandOnly = /^(?:kan du\s+|please\s+)?(?:kort\s+)?(?:oppsummer(?:ing)?|oppsumer(?:ing)?|summarize|summarise|summary|sum up|tl;dr|tldr)(?:\s+i\s+(?:punkt(?:er)?|bullet(?: points?)?|liste|list))?\.?$/i;
+  if (
+    summaryKeyword.test(trimmed) &&
+    (summaryCommandOnly.test(trimmed) || trimmed.split(/\s+/).filter(Boolean).length <= 4 || summaryFormattingHint.test(trimmed))
+  ) {
+    const bulletHint = summaryFormattingHint.test(trimmed)
+      ? " Format the summary as bullet points."
+      : "";
+    return `Write a concise summary of the incoming message context in the same language.${bulletHint} Keep only key points and do not add new facts.`;
+  }
+
   const explicitPointMatch = trimmed.match(
     /^(?:reply|respond|write|draft|say|tell|answer|svar|svare|skriv|si)\b.*?\b(?:that|at)\b\s+(.+)$/i
   );

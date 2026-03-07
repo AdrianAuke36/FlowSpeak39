@@ -33,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var localFlagsMonitor: Any?
     private var globalKeyDownMonitor: Any?
     private var localKeyDownMonitor: Any?
+    private var quickReplyKeyEventTap: CFMachPort?
+    private var quickReplyKeyEventSource: CFRunLoopSource?
 
     private var backendStatusItem: NSMenuItem?
     private var aiMenuItem: NSMenuItem?
@@ -66,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var isCapturingRewriteInstruction: Bool = false
     private var pendingRewriteTargetApp: NSRunningApplication?
     private var quickReplyContextText: String = ""
+    private var hasPendingQuickReplyContextRewrite: Bool = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogStore.shared.record(.info, "App launched")
@@ -263,9 +266,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return event }
             return self.handleKeyDownEvent(event) ? nil : event
         }
+        setupQuickReplyShortcutSuppressionTap()
     }
 
     private func teardownKeyboardMonitors() {
+        teardownQuickReplyShortcutSuppressionTap()
         if let globalFlagsMonitor {
             NSEvent.removeMonitor(globalFlagsMonitor)
             self.globalFlagsMonitor = nil
@@ -316,13 +321,128 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return false
         }
 
-        let isQuickReplyContextShortcut =
-            event.keyCode == UInt16(kVK_ISO_Section) ||
-            (event.charactersIgnoringModifiers?.trimmingCharacters(in: .whitespacesAndNewlines) == "<")
-        guard isQuickReplyContextShortcut else {
+        guard isQuickReplyContextShortcut(event) else {
             return false
         }
 
+        triggerQuickReplyContextCapture()
+        return true
+    }
+
+    private func setupQuickReplyShortcutSuppressionTap() {
+        guard quickReplyKeyEventTap == nil else { return }
+
+        let eventMask = (1 << CGEventType.keyDown.rawValue)
+        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            let app = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
+            return app.handleQuickReplyEventTap(proxy: proxy, type: type, event: event)
+        }
+
+        let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(eventMask),
+            callback: callback,
+            userInfo: refcon
+        ) else {
+            AppLogStore.shared.record(.warning, "Quick reply suppression tap unavailable")
+            return
+        }
+
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            AppLogStore.shared.record(.warning, "Quick reply suppression source unavailable")
+            return
+        }
+
+        quickReplyKeyEventTap = tap
+        quickReplyKeyEventSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    private func teardownQuickReplyShortcutSuppressionTap() {
+        if let source = quickReplyKeyEventSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            quickReplyKeyEventSource = nil
+        }
+        if let tap = quickReplyKeyEventTap {
+            CFMachPortInvalidate(tap)
+            quickReplyKeyEventTap = nil
+        }
+    }
+
+    private func handleQuickReplyEventTap(
+        proxy _: CGEventTapProxy,
+        type: CGEventType,
+        event: CGEvent
+    ) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = quickReplyKeyEventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard type == .keyDown else {
+            return Unmanaged.passUnretained(event)
+        }
+        if settings.isShortcutCaptureActive {
+            return Unmanaged.passUnretained(event)
+        }
+        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let flags = event.flags
+        if flags.contains(.maskShift) || flags.contains(.maskControl) {
+            return Unmanaged.passUnretained(event)
+        }
+        guard isSelectedTriggerDownForQuickReplyEvent(flags: flags) else {
+            return Unmanaged.passUnretained(event)
+        }
+        guard isQuickReplyContextShortcut(event) else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.triggerQuickReplyContextCapture()
+        }
+        return nil
+    }
+
+    private func isSelectedTriggerDownForQuickReplyEvent(flags: CGEventFlags) -> Bool {
+        switch settings.shortcutTriggerKey {
+        case .function:
+            return flags.contains(.maskSecondaryFn) || functionModifierIsDown
+        case .leftOption:
+            return flags.contains(.maskAlternate) || leftOptionModifierIsDown
+        case .rightOption:
+            return flags.contains(.maskAlternate) || rightOptionModifierIsDown
+        case .leftCommand:
+            return flags.contains(.maskCommand) || leftCommandModifierIsDown
+        case .rightCommand:
+            return flags.contains(.maskCommand) || rightCommandModifierIsDown
+        }
+    }
+
+    private func isQuickReplyContextShortcut(_ event: NSEvent) -> Bool {
+        event.keyCode == UInt16(kVK_ISO_Section) ||
+            (event.charactersIgnoringModifiers?.trimmingCharacters(in: .whitespacesAndNewlines) == "<")
+    }
+
+    private func isQuickReplyContextShortcut(_ event: CGEvent) -> Bool {
+        if event.getIntegerValueField(.keyboardEventKeycode) == Int64(kVK_ISO_Section) {
+            return true
+        }
+        guard let nsEvent = NSEvent(cgEvent: event) else { return false }
+        return isQuickReplyContextShortcut(nsEvent)
+    }
+
+    private func triggerQuickReplyContextCapture() {
         cancelPendingFnStart()
         if dictation.isCaptureActive {
             dictation.cancelCapture()
@@ -334,7 +454,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Task { @MainActor [weak self] in
             await self?.captureQuickReplyContext()
         }
-        return true
     }
 
     private func processModifierStateSnapshot() {
@@ -584,6 +703,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         quickReplyContextText = trimmed
+        hasPendingQuickReplyContextRewrite = true
         playQuickReplySavedSound()
         overlay.showSavedToast()
         AppLogStore.shared.record(.info, "Quick reply context saved", metadata: ["chars": "\(trimmed.count)"])
@@ -722,13 +842,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let rewriteMode = rewriteFieldContext.map { contextResolver.draftMode(for: $0) }
 
         let (snapshot, copiedSelection) = await readSelectedTextFromFocusedApp()
-        let usesQuickReplyContext = copiedSelection.isEmpty && !quickReplyContextText.isEmpty
-        let sourceText = usesQuickReplyContext ? quickReplyContextText : copiedSelection
+        let focusedTextFallback = contextResolver.focusedTextForRewrite(maxLength: 9000) ?? ""
+        let hasSavedQuickReplyContext = !quickReplyContextText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if !hasSavedQuickReplyContext {
+            hasPendingQuickReplyContextRewrite = false
+        }
+        let shouldPrioritizeSavedContext = hasPendingQuickReplyContextRewrite && hasSavedQuickReplyContext
+        let usesQuickReplyContext = shouldPrioritizeSavedContext || (copiedSelection.isEmpty && hasSavedQuickReplyContext)
+        let usesFocusedTextFallback = !usesQuickReplyContext && copiedSelection.isEmpty && !focusedTextFallback.isEmpty
+        let sourceText: String = {
+            if usesQuickReplyContext { return quickReplyContextText }
+            if usesFocusedTextFallback { return focusedTextFallback }
+            return copiedSelection
+        }()
         let emailRecipientHint = usesQuickReplyContext ? rewriteFieldContext?.emailRecipientHint : nil
 
         guard !sourceText.isEmpty else {
             restorePasteboardSnapshot(snapshot)
-            presentRewriteError("No selected text found. Highlight text, or save context first with \(settings.shortcutTriggerKey.saveReplyContextShortcut).")
+            presentRewriteError("No text found. Highlight text, save context with \(settings.shortcutTriggerKey.saveReplyContextShortcut), or place cursor in a text field with existing content.")
             return
         }
 
@@ -767,8 +898,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             restorePasteboardSnapshot(snapshot)
             if usesQuickReplyContext {
                 quickReplyContextText = ""
+                hasPendingQuickReplyContextRewrite = false
             }
-            print("✏️ rewrite done | chars:", sourceText.count, "->", rewritten.count, usesQuickReplyContext ? "(from saved context)" : "")
+            if usesFocusedTextFallback {
+                AppLogStore.shared.record(.info, "Rewrite used focused text fallback", metadata: ["chars": "\(sourceText.count)"])
+            }
+            print(
+                "✏️ rewrite done | chars:",
+                sourceText.count,
+                "->",
+                rewritten.count,
+                usesQuickReplyContext ? "(from saved context)" : (usesFocusedTextFallback ? "(from focused text)" : "")
+            )
         } catch {
             restorePasteboardSnapshot(snapshot)
             presentRewriteError("Rewrite failed: \(error.localizedDescription)")
