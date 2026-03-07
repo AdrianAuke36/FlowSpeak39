@@ -9,6 +9,11 @@ struct HomeView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var activePage: Page = .home
     @State private var permissionRefreshNonce: Int = 0
+    @State private var showSignedOutPopup: Bool = false
+    @State private var showUpgradePlansModal: Bool = false
+    @State private var showAccountPopover: Bool = false
+    @State private var settingsInitialSection: SettingsSection = .general
+    @State private var settingsViewIdentity: UUID = UUID()
 
     enum Page: CaseIterable, Identifiable {
         case home
@@ -44,24 +49,93 @@ struct HomeView: View {
                 if shouldShowSetupOnboarding {
                     SetupOnboardingView()
                 } else {
-                    HStack(spacing: 0) {
-                        Sidebar(activePage: $activePage)
-                        Divider()
-                        pageContent
+                    ZStack {
+                        HStack(spacing: 0) {
+                            Sidebar(
+                                activePage: $activePage,
+                                onUpgradeTap: { showUpgradePlansModal = true }
+                            )
+                            Divider()
+                            pageContent
+                        }
+
+                        VStack {
+                            HStack(spacing: 10) {
+                                Button {
+                                    showAccountPopover.toggle()
+                                } label: {
+                                    Image(systemName: "person.crop.circle")
+                                        .font(.system(size: 19, weight: .medium))
+                                        .foregroundStyle(AppTheme.primaryText)
+                                        .frame(width: 34, height: 34)
+                                }
+                                .buttonStyle(.plain)
+                                .background(
+                                    Circle()
+                                        .fill(AppTheme.surface)
+                                        .overlay(
+                                            Circle()
+                                                .strokeBorder(AppTheme.border, lineWidth: 1)
+                                        )
+                                )
+                                .popover(isPresented: $showAccountPopover, arrowEdge: .top) {
+                                    AccountMenuPopover(
+                                        displayName: resolvedAccountName,
+                                        email: settings.supabaseUserEmail,
+                                        onUpgrade: {
+                                            showAccountPopover = false
+                                            showUpgradePlansModal = true
+                                        },
+                                        onManageAccount: {
+                                            showAccountPopover = false
+                                            openAccountSettings()
+                                        }
+                                    )
+                                }
+                            }
+                            .padding(.top, 14)
+                            .padding(.trailing, 20)
+
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .zIndex(60)
+
+                        if showUpgradePlansModal {
+                            UpgradePlansModal(isPresented: $showUpgradePlansModal)
+                                .transition(.opacity)
+                                .zIndex(100)
+                        }
                     }
                     .background(AppTheme.canvas)
                 }
             } else {
-                AuthGateView()
+                ZStack {
+                    AuthGateView()
+
+                    if showSignedOutPopup {
+                        SignedOutPopup(isVisible: $showSignedOutPopup)
+                            .transition(.opacity)
+                            .zIndex(120)
+                    }
+                }
             }
         }
         .frame(minWidth: 1160, minHeight: 760)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             refreshPermissionGate()
+            if settings.consumePendingSignedOutPopup() {
+                showSignedOutPopup = true
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissionGate()
+        }
+        .onChange(of: settings.hasAuthenticatedSession) { _, isAuthenticated in
+            if !isAuthenticated && settings.consumePendingSignedOutPopup() {
+                showSignedOutPopup = true
+            }
         }
     }
 
@@ -75,7 +149,13 @@ struct HomeView: View {
         case .style:
             StylePage()
         case .settings:
-            SettingsView()
+            SettingsView(initialSection: settingsInitialSection)
+                .id(settingsViewIdentity)
+                .onAppear {
+                    if settingsInitialSection != .general {
+                        settingsInitialSection = .general
+                    }
+                }
         }
     }
 
@@ -88,9 +168,362 @@ struct HomeView: View {
         permissionRefreshNonce += 1
     }
 
+    private var resolvedAccountName: String {
+        let first = settings.supabaseUserFirstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let last = settings.supabaseUserLastName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let full = [first, last]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !full.isEmpty {
+            return full
+        }
+
+        let fallback = settings.greetingDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !fallback.isEmpty {
+            return fallback
+        }
+
+        return "BlueSpeak user"
+    }
+
+    private func openAccountSettings() {
+        settingsInitialSection = .account
+        settingsViewIdentity = UUID()
+        activePage = .settings
+    }
+
     private static var hasMissingCriticalPermissions: Bool {
         !AXIsProcessTrusted() ||
         !CGPreflightListenEventAccess()
+    }
+}
+
+private struct AccountMenuPopover: View {
+    let displayName: String
+    let email: String
+    let onUpgrade: () -> Void
+    let onManageAccount: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(AppTheme.accentSoft)
+                    .frame(width: 44, height: 44)
+                    .overlay(
+                        Text(initials)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(AppTheme.accent)
+                    )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(displayName)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(AppTheme.primaryText)
+                        .lineLimit(1)
+
+                    Text(email.isEmpty ? "No email" : email)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+            .padding(16)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("You are on BlueSpeak Basic")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+
+                HStack(spacing: 10) {
+                    Button("Upgrade") {
+                        onUpgrade()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppTheme.accent)
+
+                    Button("Manage account") {
+                        onManageAccount()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(16)
+        }
+        .frame(width: 360)
+        .background(AppTheme.sheetMaterial)
+    }
+
+    private var initials: String {
+        let words = displayName
+            .split(whereSeparator: \.isWhitespace)
+            .prefix(2)
+        let letters = words.compactMap { word -> String? in
+            guard let first = word.first else { return nil }
+            return String(first).uppercased()
+        }
+        if letters.isEmpty {
+            return "B"
+        }
+        return letters.joined()
+    }
+}
+
+private struct UpgradePlansModal: View {
+    @Binding var isPresented: Bool
+    @State private var billingCycle: BillingCycle = .annual
+
+    private enum BillingCycle: String {
+        case monthly
+        case annual
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.34)
+                .ignoresSafeArea()
+                .onTapGesture { isPresented = false }
+
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("Plans and Billing")
+                        .font(.system(size: 44, weight: .bold, design: .serif))
+                        .foregroundStyle(AppTheme.primaryText)
+
+                    Spacer()
+
+                    Button {
+                        isPresented = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .background(
+                        Circle()
+                            .fill(AppTheme.surface)
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(AppTheme.border, lineWidth: 1)
+                            )
+                    )
+                }
+
+                Divider()
+
+                billingCyclePicker
+
+                HStack(spacing: 0) {
+                    planCard(
+                        subtitle: "For individuals",
+                        title: "Basic",
+                        price: "Free",
+                        badge: nil,
+                        features: [
+                            "3,000 words per day",
+                            "Dictation, translate and rewrite",
+                            "Works across all apps",
+                            "Standard support"
+                        ],
+                        actionTitle: nil,
+                        action: nil,
+                        emphasized: false
+                    )
+
+                    Divider()
+
+                    planCard(
+                        subtitle: "For individuals and teams",
+                        title: "Pro",
+                        price: billingCycle == .annual ? "12 USD per user/mo" : "15 USD per user/mo",
+                        badge: billingCycle == .annual ? "-20%" : nil,
+                        features: [
+                            "Everything in Basic",
+                            "Unlimited words on all devices",
+                            "Priority support",
+                            "Early feature access",
+                            "Advanced reply + rewrite controls"
+                        ],
+                        actionTitle: "Upgrade to Pro",
+                        action: openUpgradePage,
+                        emphasized: true
+                    )
+
+                    Divider()
+
+                    planCard(
+                        subtitle: "For teams with advanced needs",
+                        title: "Enterprise",
+                        price: billingCycle == .annual ? "24 USD per user/mo" : "30 USD per user/mo",
+                        badge: nil,
+                        features: [
+                            "Everything in Pro",
+                            "SSO / SAML",
+                            "Usage dashboards",
+                            "Dedicated onboarding",
+                            "Priority SLA support"
+                        ],
+                        actionTitle: "Create a team",
+                        action: openTeamPage,
+                        emphasized: false
+                    )
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(AppTheme.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .strokeBorder(AppTheme.border, lineWidth: 1)
+                        )
+                )
+            }
+            .padding(28)
+            .frame(maxWidth: 1120)
+            .background(
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(AppTheme.sheetMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24)
+                            .fill(AppTheme.surface.opacity(0.22))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24)
+                            .strokeBorder(AppTheme.border, lineWidth: 1)
+                    )
+                    .shadow(color: AppTheme.shadow, radius: 22, x: 0, y: 10)
+            )
+            .padding(24)
+        }
+    }
+
+    private var billingCyclePicker: some View {
+        HStack(spacing: 0) {
+            billingCycleButton(title: "Monthly", cycle: .monthly)
+            billingCycleButton(title: "Annual", cycle: .annual)
+        }
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(AppTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(AppTheme.border, lineWidth: 1)
+                )
+        )
+        .frame(maxWidth: 340)
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func billingCycleButton(title: String, cycle: BillingCycle) -> some View {
+        let selected = billingCycle == cycle
+        return Button(title) {
+            billingCycle = cycle
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 16, weight: .semibold))
+        .foregroundStyle(selected ? AppTheme.primaryText : AppTheme.secondaryText)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(selected ? AppTheme.canvas : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(selected ? AppTheme.border : Color.clear, lineWidth: 1)
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func planCard(
+        subtitle: String,
+        title: String,
+        price: String,
+        badge: String?,
+        features: [String],
+        actionTitle: String?,
+        action: (() -> Void)?,
+        emphasized: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(subtitle)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(AppTheme.secondaryText)
+
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 38, weight: .bold, design: .serif))
+                        .foregroundStyle(AppTheme.primaryText)
+
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(AppTheme.accent)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(AppTheme.accentSoft)
+                            )
+                    }
+                }
+
+                Text(price)
+                    .font(.system(size: 19, weight: .medium))
+                    .foregroundStyle(AppTheme.primaryText)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(features, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(AppTheme.success)
+                            .padding(.top, 3)
+
+                        Text(item)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(AppTheme.primaryText)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                if let actionTitle, let action {
+                    Button(actionTitle) {
+                        action()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(emphasized ? AppTheme.primaryText : AppTheme.surface)
+                    .foregroundStyle(emphasized ? AppTheme.canvas : AppTheme.primaryText)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, minHeight: 560)
+    }
+
+    private func openUpgradePage() {
+        guard let url = URL(string: "https://flow-speak-direct.lovable.app") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func openTeamPage() {
+        guard let url = URL(string: "https://flow-speak-direct.lovable.app") else { return }
+        NSWorkspace.shared.open(url)
     }
 }
 
@@ -1144,6 +1577,7 @@ struct Sidebar: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var history = DictationHistory.shared
     @Binding var activePage: HomeView.Page
+    let onUpgradeTap: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1199,7 +1633,7 @@ struct Sidebar: View {
                         Spacer()
 
                         Button("Upgrade") {
-                            openUpgradePage()
+                            onUpgradeTap()
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -1231,6 +1665,7 @@ struct Sidebar: View {
                 tipRow(icon: "mic.fill", text: "Hold \(settings.shortcutTriggerKey.compactLabel) to dictate")
                 tipRow(icon: "globe", text: "\(settings.shortcutTriggerKey.compactLabel) + Shift to translate")
                 tipRow(icon: "wand.and.stars", text: "\(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite")
+                tipRow(icon: "square.and.arrow.down.on.square", text: "\(settings.shortcutTriggerKey.compactLabel) + < to save context")
             }
             .padding(.all, 12)
             .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
@@ -1314,11 +1749,6 @@ struct Sidebar: View {
         freeWordsRemaining == 0
             ? "0 left today"
             : "\(freeWordsRemaining) left today"
-    }
-
-    private func openUpgradePage() {
-        guard let url = URL(string: "https://flow-speak-direct.lovable.app") else { return }
-        NSWorkspace.shared.open(url)
     }
 
     @ViewBuilder

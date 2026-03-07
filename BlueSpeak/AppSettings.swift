@@ -347,8 +347,11 @@ final class AppSettings: ObservableObject {
         static let supabaseAnonKey = "supabaseAnonKey"
         static let supabaseUserEmail = "supabaseUserEmail"
         static let supabaseUserDisplayName = "supabaseUserDisplayName"
+        static let supabaseUserFirstName = "supabaseUserFirstName"
+        static let supabaseUserLastName = "supabaseUserLastName"
         static let supabaseSessionExpiresAt = "supabaseSessionExpiresAt"
         static let supabaseRefreshToken = "supabaseRefreshToken"
+        static let pendingSignedOutPopup = "pendingSignedOutPopup"
         static let hasCompletedSetupOnboarding = "hasCompletedSetupOnboarding"
         static let emailReplyGreetingMode = "emailReplyGreetingMode"
         static let emailReplySignoffMode = "emailReplySignoffMode"
@@ -493,6 +496,36 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var supabaseUserFirstName: String {
+        didSet {
+            let normalized = supabaseUserFirstName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if supabaseUserFirstName != normalized {
+                supabaseUserFirstName = normalized
+                return
+            }
+            if normalized.isEmpty {
+                UserDefaults.standard.removeObject(forKey: StorageKey.supabaseUserFirstName)
+            } else {
+                UserDefaults.standard.set(normalized, forKey: StorageKey.supabaseUserFirstName)
+            }
+        }
+    }
+
+    @Published var supabaseUserLastName: String {
+        didSet {
+            let normalized = supabaseUserLastName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if supabaseUserLastName != normalized {
+                supabaseUserLastName = normalized
+                return
+            }
+            if normalized.isEmpty {
+                UserDefaults.standard.removeObject(forKey: StorageKey.supabaseUserLastName)
+            } else {
+                UserDefaults.standard.set(normalized, forKey: StorageKey.supabaseUserLastName)
+            }
+        }
+    }
+
     @Published var supabaseSessionExpiresAt: Date? {
         didSet {
             if let expiry = supabaseSessionExpiresAt {
@@ -609,6 +642,8 @@ final class AppSettings: ObservableObject {
 
         self.supabaseUserEmail = UserDefaults.standard.string(forKey: StorageKey.supabaseUserEmail) ?? ""
         self.supabaseUserDisplayName = UserDefaults.standard.string(forKey: StorageKey.supabaseUserDisplayName) ?? ""
+        self.supabaseUserFirstName = UserDefaults.standard.string(forKey: StorageKey.supabaseUserFirstName) ?? ""
+        self.supabaseUserLastName = UserDefaults.standard.string(forKey: StorageKey.supabaseUserLastName) ?? ""
         if let rawExpiry = UserDefaults.standard.object(forKey: StorageKey.supabaseSessionExpiresAt) as? Double {
             self.supabaseSessionExpiresAt = Date(timeIntervalSince1970: rawExpiry)
         } else {
@@ -861,9 +896,6 @@ final class AppSettings: ObservableObject {
             throw AppSettingsError.auth("Supabase did not return a usable session.")
         }
         supabaseUserEmail = credentials.email
-        if let displayName = response.user?.displayName {
-            supabaseUserDisplayName = displayName
-        }
         AppLogStore.shared.record(.info, "Signed in", metadata: ["email": credentials.email])
     }
 
@@ -899,6 +931,9 @@ final class AppSettings: ObservableObject {
         supabaseUserEmail = credentials.email
         if !cleanFullName.isEmpty {
             supabaseUserDisplayName = cleanFullName
+            let parsed = parsedFirstAndLastName(from: cleanFullName)
+            supabaseUserFirstName = parsed.first
+            supabaseUserLastName = parsed.last
         }
 
         if applySupabaseSession(response) {
@@ -938,11 +973,14 @@ final class AppSettings: ObservableObject {
     @MainActor
     func signOutSupabaseSession() {
         let previousEmail = supabaseUserEmail
+        UserDefaults.standard.set(true, forKey: StorageKey.pendingSignedOutPopup)
         cachedSupabaseRefreshToken = ""
         UserDefaults.standard.removeObject(forKey: StorageKey.supabaseRefreshToken)
         supabaseSessionExpiresAt = nil
         backendToken = ""
         supabaseUserDisplayName = ""
+        supabaseUserFirstName = ""
+        supabaseUserLastName = ""
         AppLogStore.shared.record(.info, "Signed out", metadata: previousEmail.isEmpty ? [:] : ["email": previousEmail])
     }
 
@@ -955,6 +993,15 @@ final class AppSettings: ObservableObject {
     }
 
     @MainActor
+    func consumePendingSignedOutPopup() -> Bool {
+        let pending = UserDefaults.standard.bool(forKey: StorageKey.pendingSignedOutPopup)
+        if pending {
+            UserDefaults.standard.set(false, forKey: StorageKey.pendingSignedOutPopup)
+        }
+        return pending
+    }
+
+    @MainActor
     func requestSupabasePasswordReset(email: String) async throws {
         let cleanEmail = try validatedAuthEmail(email)
         let _ = try await performSupabaseRequest(
@@ -962,6 +1009,76 @@ final class AppSettings: ObservableObject {
             payload: ["email": cleanEmail]
         )
         AppLogStore.shared.record(.info, "Password reset requested", metadata: ["email": cleanEmail])
+    }
+
+    @MainActor
+    func updateSupabaseProfile(firstName: String, lastName: String) async throws {
+        guard hasSupabaseSession else {
+            throw AppSettingsError.auth("No active session.")
+        }
+        _ = await refreshSupabaseSessionIfNeeded(force: false)
+
+        let token = backendToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            throw AppSettingsError.auth("Missing active JWT. Please sign in again.")
+        }
+
+        let cleanFirstName = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanLastName = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fullName = [cleanFirstName, cleanLastName]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        let payload: [String: Any] = [
+            "data": [
+                "first_name": cleanFirstName,
+                "last_name": cleanLastName,
+                "full_name": fullName
+            ]
+        ]
+
+        let data = try await performSupabaseRequest(
+            path: "/auth/v1/user",
+            method: "PUT",
+            payload: payload,
+            bearerToken: token
+        )
+
+        if let user = try? JSONDecoder().decode(SupabaseUserInfo.self, from: data) {
+            applySupabaseUser(user)
+        } else if let envelope = try? JSONDecoder().decode(SupabaseUserEnvelope.self, from: data),
+                  let user = envelope.user {
+            applySupabaseUser(user)
+        } else {
+            // Some Supabase responses omit profile payload fields; keep local state in sync.
+            supabaseUserFirstName = cleanFirstName
+            supabaseUserLastName = cleanLastName
+            supabaseUserDisplayName = fullName
+        }
+        AppLogStore.shared.record(.info, "Profile updated")
+    }
+
+    @MainActor
+    func deleteSupabaseAccount() async throws {
+        guard hasSupabaseSession else {
+            throw AppSettingsError.auth("No active session.")
+        }
+        _ = await refreshSupabaseSessionIfNeeded(force: false)
+
+        let token = backendToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            throw AppSettingsError.auth("Missing active JWT. Please sign in again.")
+        }
+
+        let _ = try await performSupabaseRequest(
+            path: "/auth/v1/user",
+            method: "DELETE",
+            payload: nil,
+            bearerToken: token
+        )
+        let deletedEmail = supabaseUserEmail
+        signOutSupabaseSession(clearRememberedEmail: true)
+        AppLogStore.shared.record(.info, "Account deleted", metadata: deletedEmail.isEmpty ? [:] : ["email": deletedEmail])
     }
 
     @MainActor
@@ -983,8 +1100,8 @@ final class AppSettings: ObservableObject {
         if let email = response.user?.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
             supabaseUserEmail = email
         }
-        if let displayName = response.user?.displayName {
-            supabaseUserDisplayName = displayName
+        if let user = response.user {
+            applySupabaseUser(user)
         }
         return true
     }
@@ -996,7 +1113,12 @@ final class AppSettings: ObservableObject {
         )
     }
 
-    private func performSupabaseRequest(path: String, payload: [String: Any]) async throws -> Data {
+    private func performSupabaseRequest(
+        path: String,
+        method: String = "POST",
+        payload: [String: Any]? = nil,
+        bearerToken: String? = nil
+    ) async throws -> Data {
         let baseURL = Self.normalizedSupabaseProjectURL(supabaseProjectURL)
         let anonKey = supabaseAnonKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !baseURL.isEmpty else {
@@ -1010,12 +1132,15 @@ final class AppSettings: ObservableObject {
         }
 
         var req = URLRequest(url: url)
-        req.httpMethod = "POST"
+        req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        let authToken = bearerToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? anonKey
+        req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         req.timeoutInterval = 10
-        req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+        if let payload {
+            req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+        }
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else {
@@ -1038,6 +1163,53 @@ final class AppSettings: ObservableObject {
         } catch {
             throw AppSettingsError.auth("Invalid Supabase auth response.")
         }
+    }
+
+    private func applySupabaseUser(_ user: SupabaseUserInfo) {
+        if let email = user.email?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
+            supabaseUserEmail = email
+        }
+
+        if let metadata = user.user_metadata {
+            let metadataFirst = metadata.first_name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let metadataLast = metadata.last_name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let metadataDisplayName = metadata.full_name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            supabaseUserFirstName = metadataFirst
+            supabaseUserLastName = metadataLast
+
+            if !metadataDisplayName.isEmpty {
+                supabaseUserDisplayName = metadataDisplayName
+            } else {
+                let composed = [metadataFirst, metadataLast]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+                supabaseUserDisplayName = composed
+            }
+        } else if let displayName = user.displayName {
+            let parsed = parsedFirstAndLastName(from: displayName)
+            supabaseUserFirstName = parsed.first
+            supabaseUserLastName = parsed.last
+            supabaseUserDisplayName = displayName
+        } else {
+            let composed = [supabaseUserFirstName, supabaseUserLastName]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            supabaseUserDisplayName = composed
+        }
+    }
+
+    private func parsedFirstAndLastName(from fullName: String) -> (first: String, last: String) {
+        let clean = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = clean.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let first = parts.first else {
+            return ("", "")
+        }
+        if parts.count == 1 {
+            return (first, "")
+        }
+        let last = parts.dropFirst().joined(separator: " ")
+        return (first, last)
     }
 
     private func validatedAuthCredentials(email: String, password: String) throws -> (email: String, password: String) {
@@ -1101,6 +1273,12 @@ private struct SupabaseUserInfo: Decodable {
 
 private struct SupabaseUserMetadata: Decodable {
     let full_name: String?
+    let first_name: String?
+    let last_name: String?
+}
+
+private struct SupabaseUserEnvelope: Decodable {
+    let user: SupabaseUserInfo?
 }
 
 private enum AppSettingsError: LocalizedError {

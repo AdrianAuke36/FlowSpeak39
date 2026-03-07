@@ -1468,12 +1468,73 @@ function normalizeListItemToken(value) {
   token = token
     .replace(/^[\-•*]\s*/, "")
     .replace(/^(?:og|and)\s+/i, "")
+    .replace(/^(?:on\s+my\s+shopping\s+list|på\s+handlelist(?:e|en|a))\s*[:,]?\s*/i, "")
+    .replace(/^(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\s+/i, "")
     .replace(/^(?:til\s+[a-zæøå][a-zæøå\-']{1,24})\s+(?:trenger|må\s+ha|need|we\s+need)\s+/i, "")
     .replace(/^(?:vi\s+)?(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|need|we\s+need|buy|get)\s+/i, "")
     .replace(/[.,;:!?]+$/g, "")
     .trim();
 
   return token;
+}
+
+function normalizeListLookupKey(value) {
+  let key = normalizeListItemToken(value);
+  if (!key) return "";
+  key = key
+    .replace(/^(?:a|an|the|en|et|ei)\s+/i, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+  return key;
+}
+
+function extractNegatedListItemToken(value) {
+  const token = String(value || "").trim();
+  if (!token) return "";
+
+  const negated = token.match(
+    /^(?:men\s+)?(?:eh+|ehm+|øh+|øhm+|uh+|uhm+|um+|umm+)?\s*(?:(?:nei|no)\s+(?:(?:ikke|not)\s+)?)?(.+)$/i
+  );
+  if (!negated?.[1]) return "";
+
+  const hasNegationCue = /^(?:men\s+)?(?:eh+|ehm+|øh+|øhm+|uh+|uhm+|um+|umm+)?\s*(?:nei|no)\b/i.test(token)
+    || /^(?:ikke|not|uten|without)\b/i.test(token);
+  if (!hasNegationCue) return "";
+
+  return normalizeListItemToken(negated[1]);
+}
+
+function buildCorrectedListItems(content) {
+  const rawItems = splitBulletItems(content);
+  if (!rawItems.length) return [];
+
+  const resolvedItems = [];
+  const indexByKey = new Map();
+
+  for (const rawItem of rawItems) {
+    const normalized = normalizeListItemToken(rawItem);
+    if (!normalized) continue;
+
+    const negatedTarget = extractNegatedListItemToken(normalized);
+    if (negatedTarget) {
+      const key = normalizeListLookupKey(negatedTarget);
+      if (!key) continue;
+      const existingIndex = indexByKey.get(key);
+      if (typeof existingIndex === "number") {
+        resolvedItems[existingIndex] = "";
+        indexByKey.delete(key);
+      }
+      continue;
+    }
+
+    const key = normalizeListLookupKey(normalized);
+    if (!key) continue;
+    if (indexByKey.has(key)) continue;
+    indexByKey.set(key, resolvedItems.length);
+    resolvedItems.push(normalized);
+  }
+
+  return resolvedItems.filter(Boolean);
 }
 
 function applyListNegationCorrections(text) {
@@ -1926,7 +1987,10 @@ function normalizePunctuationArtifacts(text) {
 
 const BULLET_COMMAND_PREFIX_RE = /^\s*(?:(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\s+(?:dette\s+)?(?:som\s+)?(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)|(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste))\s*[:,-]?\s*/i;
 const BULLET_COMMAND_HINT_RE = /\b(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\b[\s\S]{0,48}\b(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)\b/i;
-const BULLET_IMPLICIT_LIST_TRIGGER_RE = /\b(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|handleliste|ingredienser|we\s+need|need|shopping\s+list|buy|get)\b/i;
+const BULLET_IMPLICIT_LIST_TRIGGER_RE = /\b(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|handlelist(?:e|en|a)|ingredienser|we\s+need|need|shopping\s+list|shoppinglist|buy|get)\b/i;
+const LIST_HEADING_NO_RE = "Handleliste";
+const LIST_HEADING_EN_RE = "Shopping list";
+const SHOPPING_LIST_HEADING_TRIGGER_RE = /\b(?:on\s+my\s+shopping\s+list|shopping\s*list|shoppinglist|grocery\s*list|for\s+dinner|handlelist(?:e|en|a)|innkjøpsliste|til\s+middag|må\s+kjøpe|kjøp|buy|trenger\s+vi|vi\s+trenger|we\s+need|need)\b/i;
 const POINT_MARKER_RE = /\b(?:punkt|point)\s*(?:\d+|en|ett|to|tre|fire|fem|seks|sju|syv|åtte|ni|ti|one|two|three|four|five|six|seven|eight|nine|ten)\s*[:.)-]?\s*/ig;
 const PARENTHESIS_COMMAND_RE = /\b(?:åpen|open|start|venstre|left)\s+parentes\b|\b(?:lukk|lukk|slutt|close|høyre|right)\s+parentes\b|\b(?:i\s+parentes|in\s+parentheses)\b/i;
 const SPOKEN_EMOJI_ALIASES = [
@@ -1991,10 +2055,15 @@ function stripListLeadPhrases(text) {
   if (!out) return out;
 
   out = out.replace(
+    /^\s*(?:on\s+my\s+shopping\s+list|på\s+handlelist(?:e|en|a))\s*[:,]?\s*/i,
+    ""
+  );
+  out = out.replace(
     /^\s*(?:til\s+[^\s,.;:!?]+(?:\s+[^\s,.;:!?]+){0,2}\s+)?(?:trenger\s+vi|vi\s+trenger|we\s+need|need|kjøp|buy|get|handleliste(?:n)?|ingredienser(?:\s+til\s+[^\s,.;:!?]+)?)\s+/i,
     ""
   );
   out = out.replace(/\b(?:vi\s+trenger|trenger\s+vi|we\s+need|need)\b/ig, ", ");
+  out = out.replace(/\b(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\b/ig, ", ");
   return out.trim();
 }
 
@@ -2020,9 +2089,7 @@ function buildImplicitBulletList(text) {
   if (!BULLET_IMPLICIT_LIST_TRIGGER_RE.test(source)) return "";
 
   const candidate = stripListLeadPhrases(source);
-  const normalizedItems = splitBulletItems(candidate)
-    .map((item) => normalizeListItemToken(item))
-    .filter(Boolean);
+  const normalizedItems = buildCorrectedListItems(candidate);
 
   const uniqueItems = [];
   const seen = new Set();
@@ -2038,7 +2105,9 @@ function buildImplicitBulletList(text) {
   if (simpleItems.length < 2) return "";
   if (simpleItems.length < Math.ceil(uniqueItems.length * 0.6)) return "";
 
-  return simpleItems.map((item) => `- ${capitalizeFirstLetter(item)}`).join("\n");
+  const listBody = simpleItems.map((item) => `- ${capitalizeFirstLetter(item)}`).join("\n");
+  const heading = inferRequestedListHeading(source);
+  return heading ? `${heading}\n${listBody}` : listBody;
 }
 
 function applyBulletFormattingCommand(text) {
@@ -2049,7 +2118,7 @@ function applyBulletFormattingCommand(text) {
   const stripped = source.replace(BULLET_COMMAND_PREFIX_RE, "").trim();
   if (!stripped) return source;
 
-  const items = splitBulletItems(stripped);
+  const items = buildCorrectedListItems(stripped);
   if (!items.length) return source;
   return items.map((item) => `- ${item}`).join("\n");
 }
@@ -2107,6 +2176,16 @@ function applySpokenFormattingPostprocess(text) {
   return out;
 }
 
+function inferRequestedListHeading(sourceText) {
+  const source = String(sourceText || "").trim();
+  if (!source) return "";
+  if (!SHOPPING_LIST_HEADING_TRIGGER_RE.test(source)) return "";
+  if (/\b(?:shopping\s*list|shoppinglist|grocery\s*list|on\s+my\s+shopping\s+list)\b/i.test(source)) {
+    return LIST_HEADING_EN_RE;
+  }
+  return LIST_HEADING_NO_RE;
+}
+
 function hasSpokenFormattingCommandHints(text) {
   const source = String(text || "").trim();
   if (!source) return false;
@@ -2160,6 +2239,40 @@ function preserveRequestedBulletLayout(sourceText, outputText) {
   if (implicitFromSource) {
     out = implicitFromSource;
   }
+  return out;
+}
+
+function preserveRequestedListHeading(sourceText, outputText) {
+  const source = String(sourceText || "").trim();
+  let out = String(outputText || "").trim();
+  if (!source || !out) return out;
+
+  const heading = inferRequestedListHeading(source);
+  if (!heading) return out;
+  if (!/^\s*[-•*]\s+/m.test(out)) return out;
+  if (new RegExp(`^\\s*${escapeRegExp(heading)}\\s*$`, "mi").test(out)) return out;
+
+  return `${heading}\n${out}`;
+}
+
+function tidyBulletListOutput(text) {
+  let out = String(text || "").trim();
+  if (!out) return out;
+  if (!/^\s*[-•*]\s+/m.test(out)) return out;
+
+  out = out
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^(\s*[-•*]\s+)(.+)$/);
+      if (!match) return line;
+      const prefix = match[1];
+      const item = String(match[2] || "").replace(/[.,;:]+$/g, "").trim();
+      return item ? `${prefix}${item}` : "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+
   return out;
 }
 
@@ -3051,8 +3164,10 @@ async function handlePolish(body, requestSignal) {
     }
 
     finalText = preserveRequestedBulletLayout(correctedInput, finalText);
+    finalText = preserveRequestedListHeading(correctedInput, finalText);
     finalText = preserveRequestedParentheses(commandAwareInput, finalText);
     finalText = preserveRequestedEmojis(commandAwareInput, finalText);
+    finalText = tidyBulletListOutput(finalText);
     timings.totalMs = Date.now() - requestStartedAt;
     const retryCount = Math.max(0, (timings.modelAttempts?.length || 0) - 1);
     console.log(
@@ -3269,8 +3384,10 @@ async function handleRewrite(body, requestSignal) {
     const rewriteRawFormattingSource = `${instruction}\n${correctedInput}`;
     const rewriteFormattedSource = applySpokenFormattingPostprocess(rewriteRawFormattingSource);
     finalText = preserveRequestedBulletLayout(rewriteRawFormattingSource, finalText);
+    finalText = preserveRequestedListHeading(rewriteRawFormattingSource, finalText);
     finalText = preserveRequestedParentheses(rewriteFormattedSource, finalText);
     finalText = preserveRequestedEmojis(rewriteFormattedSource, finalText).trim();
+    finalText = tidyBulletListOutput(finalText);
     if (!finalText) {
       return { status: 502, json: { error: "Model returned empty text." } };
     }
@@ -3324,8 +3441,10 @@ async function handleRewrite(body, requestSignal) {
               out = normalizeEmailBody(out);
             }
             out = preserveRequestedBulletLayout(rewriteRawFormattingSource, out);
+            out = preserveRequestedListHeading(rewriteRawFormattingSource, out);
             out = preserveRequestedParentheses(rewriteFormattedSource, out);
             out = preserveRequestedEmojis(rewriteFormattedSource, out);
+            out = tidyBulletListOutput(out);
             return out;
           })(),
           appliedMode: effectiveRewriteMode,

@@ -887,7 +887,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makeMenuItem(title: "Home", action: #selector(openHome)))
-        menu.addItem(makeMenuViewRootMenuItem())
 
         menu.addItem(NSMenuItem.separator())
         if settings.statusMenuAdvancedModeEnabled {
@@ -945,22 +944,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item
-    }
-
-    private func makeMenuViewRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Menu View", action: nil, keyEquivalent: "")
-        let modeMenu = NSMenu(title: "Menu View")
-
-        let simpleItem = makeMenuItem(title: "Simple", action: #selector(selectSimpleMenuView))
-        simpleItem.state = settings.statusMenuAdvancedModeEnabled ? .off : .on
-        modeMenu.addItem(simpleItem)
-
-        let advancedItem = makeMenuItem(title: "Advanced", action: #selector(selectAdvancedMenuView))
-        advancedItem.state = settings.statusMenuAdvancedModeEnabled ? .on : .off
-        modeMenu.addItem(advancedItem)
-
-        rootItem.submenu = modeMenu
-        return rootItem
     }
 
     private func makeAdvancedPreferencesRootMenuItem() -> NSMenuItem {
@@ -1262,14 +1245,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func signOut() {
         settings.signOutSupabaseSession()
-    }
-
-    @objc private func selectSimpleMenuView() {
-        settings.statusMenuAdvancedModeEnabled = false
-    }
-
-    @objc private func selectAdvancedMenuView() {
-        settings.statusMenuAdvancedModeEnabled = true
     }
 
     @objc private func selectLanguage(_ sender: NSMenuItem) {

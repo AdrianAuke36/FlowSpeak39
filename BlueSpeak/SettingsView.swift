@@ -10,7 +10,7 @@ import Carbon.HIToolbox
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
+enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case account
     case privacy
@@ -67,8 +67,15 @@ struct SettingsView: View {
     @State private var microphones: [MicrophoneOption] = MicrophoneCatalog.availableOptions()
     @State private var supabaseEmailInput: String = ""
     @State private var supabasePasswordInput: String = ""
+    @State private var accountFirstNameInput: String = ""
+    @State private var accountLastNameInput: String = ""
     @State private var supabaseAuthStatus: String = ""
     @State private var supabaseAuthBusy: Bool = false
+    @State private var showDeleteAccountConfirmation: Bool = false
+
+    init(initialSection: SettingsSection = .general) {
+        _selectedSection = State(initialValue: initialSection)
+    }
 
     var body: some View {
         HStack(spacing: 16) {
@@ -98,9 +105,29 @@ struct SettingsView: View {
             if supabaseEmailInput.isEmpty {
                 supabaseEmailInput = settings.supabaseUserEmail
             }
+            if accountFirstNameInput.isEmpty {
+                accountFirstNameInput = settings.supabaseUserFirstName
+            }
+            if accountLastNameInput.isEmpty {
+                accountLastNameInput = settings.supabaseUserLastName
+            }
         }
         .onDisappear {
             stopShortcutCapture()
+        }
+        .onChange(of: settings.supabaseUserFirstName) { _, nextValue in
+            accountFirstNameInput = nextValue
+        }
+        .onChange(of: settings.supabaseUserLastName) { _, nextValue in
+            accountLastNameInput = nextValue
+        }
+        .alert("Delete account permanently?", isPresented: $showDeleteAccountConfirmation) {
+            Button("Delete", role: .destructive) {
+                deleteSupabaseAccount()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This action removes your account and signs you out on this Mac.")
         }
     }
 
@@ -264,9 +291,27 @@ struct SettingsView: View {
                         readOnlyValue(settings.supabaseUserEmail.isEmpty ? "Unknown account" : settings.supabaseUserEmail)
                     }
 
+                    settingRow(title: "First name") {
+                        TextField("First name", text: $accountFirstNameInput)
+                            .textFieldStyle(.plain)
+                            .storeField(maxWidth: 320)
+                    }
+
+                    settingRow(title: "Last name") {
+                        TextField("Last name", text: $accountLastNameInput)
+                            .textFieldStyle(.plain)
+                            .storeField(maxWidth: 320)
+                    }
+
                     HStack(spacing: 8) {
-                        Button("Refresh JWT") {
-                            refreshSupabaseJWT()
+                        Button("Save name") {
+                            updateSupabaseName()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(supabaseAuthBusy)
+
+                        Button("Reset password") {
+                            requestSupabasePasswordResetForCurrentAccount()
                         }
                         .buttonStyle(.bordered)
                         .disabled(supabaseAuthBusy)
@@ -277,8 +322,8 @@ struct SettingsView: View {
                         .buttonStyle(.bordered)
                         .disabled(supabaseAuthBusy)
 
-                        Button("Switch account") {
-                            switchAccountSupabase()
+                        Button("Delete account", role: .destructive) {
+                            showDeleteAccountConfirmation = true
                         }
                         .buttonStyle(.bordered)
                         .disabled(supabaseAuthBusy)
@@ -415,10 +460,6 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     settingRow(title: "Default innsettingsmodus") {
                         modePicker(selection: $settings.globalMode, width: 360)
-                    }
-
-                    settingRow(title: "Status menu layout") {
-                        statusMenuModeBar()
                     }
 
                     settingRow(title: "Backend URL") {
@@ -755,23 +796,6 @@ struct SettingsView: View {
         .frame(maxWidth: 520)
     }
 
-    private func statusMenuModeBar() -> some View {
-        Picker("Menu popup view", selection: statusMenuModeBinding) {
-            Text("Compact").tag(false)
-            Text("Detailed").tag(true)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(maxWidth: 280)
-    }
-
-    private var statusMenuModeBinding: Binding<Bool> {
-        Binding(
-            get: { settings.statusMenuAdvancedModeEnabled },
-            set: { settings.statusMenuAdvancedModeEnabled = $0 }
-        )
-    }
-
     private func modePicker(selection: Binding<InsertionMode>, width: CGFloat = 320) -> some View {
         Picker("", selection: selection) {
             ForEach(InsertionMode.allCases) { mode in
@@ -927,6 +951,37 @@ struct SettingsView: View {
         supabaseEmailInput = ""
         supabasePasswordInput = ""
         supabaseAuthStatus = "Signed out. Enter another email to switch accounts."
+    }
+
+    private func updateSupabaseName() {
+        performSupabaseAuth(starting: "Saving name...") {
+            try await settings.updateSupabaseProfile(
+                firstName: accountFirstNameInput,
+                lastName: accountLastNameInput
+            )
+            return "Name updated."
+        }
+    }
+
+    private func requestSupabasePasswordResetForCurrentAccount() {
+        performSupabaseAuth(starting: "Sending reset email...") {
+            let email = settings.supabaseUserEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !email.isEmpty else {
+                return "No account email available."
+            }
+            try await settings.requestSupabasePasswordReset(email: email)
+            return "If the account exists, a reset email has been sent to \(email)."
+        }
+    }
+
+    private func deleteSupabaseAccount() {
+        performSupabaseAuth(starting: "Deleting account...") {
+            try await settings.deleteSupabaseAccount()
+            supabaseEmailInput = ""
+            accountFirstNameInput = ""
+            accountLastNameInput = ""
+            return "Account deleted."
+        }
     }
 
     private func requestSupabasePasswordReset() {
