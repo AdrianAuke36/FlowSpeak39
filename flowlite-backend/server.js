@@ -1403,10 +1403,7 @@ const MODE_RULES = {
 };
 
 const STYLE_RULES = {
-  clean: "Style: clean. Rewrite only. Keep neutral tone. Correct grammar and punctuation, apply self-corrections, and remove filler words (e.g. uhm/ehm) without changing meaning.",
-  formal: "Style: formal. Use clear capitalization and proper punctuation.",
-  casual: "Style: casual. Keep it friendly and concise. Use slightly lighter punctuation while preserving readability.",
-  excited: "Style: excited. Keep it positive and energetic with occasional exclamation marks, but do not overdo it."
+  clean: "Style: clean. Rewrite only. Keep neutral tone. Correct grammar and punctuation, apply self-corrections, and remove filler words (e.g. uhm/ehm) without changing meaning."
 };
 
 const INTERPRETATION_RULES = {
@@ -1421,8 +1418,7 @@ const POLISH_FACT_GUARDRAIL =
   "Preserve concrete details (names, dates, numbers, amounts, URLs, explicit yes/no intent) unless they are clearly recognition errors.";
 
 function normalizeStyle(raw) {
-  const v = String(raw || "").trim().toLowerCase();
-  if (v === "clean" || v === "formal" || v === "casual" || v === "excited") return v;
+  // Style selection is disabled in the app; keep backend behavior fixed to clean.
   return "clean";
 }
 
@@ -1997,6 +1993,7 @@ function normalizePunctuationArtifacts(text) {
 const BULLET_COMMAND_PREFIX_RE = /^\s*(?:(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\s+(?:dette\s+)?(?:som\s+)?(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)|(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste))\s*[:,-]?\s*/i;
 const BULLET_COMMAND_HINT_RE = /\b(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\b[\s\S]{0,48}\b(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)\b/i;
 const BULLET_IMPLICIT_LIST_TRIGGER_RE = /\b(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|hand(?:le)?list(?:e|en|a)|ingredienser|we\s+need|need|shopping\s+list|shoppinglist|buy|get)\b/i;
+const BULLET_COMPACT_LIST_STRONG_TRIGGER_RE = /\b(?:on\s+my\s+shopping\s+list|shopping\s*list|shoppinglist|grocery\s*list|for\s+dinner|hand(?:le)?list(?:e|en|a)|innkjøpsliste|til\s+middag|ingredienser|ingredients)\b/i;
 const LIST_HEADING_NO_RE = "Handleliste";
 const LIST_HEADING_EN_RE = "Shopping list";
 const DINNER_LIST_HEADING_NO_RE = "Det vi trenger til middag:";
@@ -2121,6 +2118,103 @@ function isLikelySimpleListItem(text) {
   return true;
 }
 
+function isListContextOnlyItem(text) {
+  const value = String(text || "").trim().toLowerCase();
+  if (!value) return false;
+  return /^(?:for\s+(?:today|tomorrow|tonight)|today|tomorrow|tonight|i\s+dag|i\s+morgen|i\s+kveld|til\s+i\s+dag|til\s+i\s+morgen|til\s+i\s+kveld|for\s+i\s+dag|for\s+i\s+morgen|for\s+i\s+kveld)$/.test(value);
+}
+
+function resolveListHeadingLanguage(heading, outputText, preferredLanguage = "") {
+  let out = String(heading || "").trim();
+  if (!out) return out;
+
+  const preferred = String(preferredLanguage || "").trim().toLowerCase();
+  const wantsEnglish = preferred.startsWith("en");
+  const wantsNorwegian = preferred.startsWith("nb") || preferred.startsWith("nn") || preferred.startsWith("no");
+  const englishSignal = /\b(?:for|tomorrow|today|shopping|ingredients|we need|milk|eggs|bread)\b/i.test(String(outputText || ""));
+
+  const shouldUseEnglish = wantsEnglish || (!wantsNorwegian && englishSignal);
+  if (shouldUseEnglish) {
+    if (out === LIST_HEADING_NO_RE) return LIST_HEADING_EN_RE;
+    if (out === DINNER_LIST_HEADING_NO_RE) return DINNER_LIST_HEADING_EN_RE;
+    return out;
+  }
+
+  if (wantsNorwegian) {
+    if (out === LIST_HEADING_EN_RE) return LIST_HEADING_NO_RE;
+    if (out === DINNER_LIST_HEADING_EN_RE) return DINNER_LIST_HEADING_NO_RE;
+  }
+
+  return out;
+}
+
+function applyListTimingQualifier(heading, sourceText, outputText, preferredLanguage = "") {
+  const base = String(heading || "").trim();
+  if (!base) return base;
+
+  const source = `${String(sourceText || "")}\n${String(outputText || "")}`.toLowerCase();
+  const preferred = String(preferredLanguage || "").trim().toLowerCase();
+  const wantsEnglish = preferred.startsWith("en");
+  const wantsNorwegian = preferred.startsWith("nb") || preferred.startsWith("nn") || preferred.startsWith("no");
+  const englishSignal = /\b(?:for|tomorrow|today|tonight)\b/i.test(source);
+
+  const hasTomorrow = /\b(?:for\s+tomorrow|tomorrow|i\s+morgen|til\s+i\s+morgen)\b/i.test(source);
+  const hasToday = /\b(?:for\s+today|today|i\s+dag|til\s+i\s+dag)\b/i.test(source);
+  const hasTonight = /\b(?:for\s+tonight|tonight|i\s+kveld|til\s+i\s+kveld)\b/i.test(source);
+
+  let qualifier = "";
+  if (hasTomorrow) qualifier = (wantsNorwegian && !wantsEnglish) ? "til i morgen" : "for tomorrow";
+  else if (hasToday) qualifier = (wantsNorwegian && !wantsEnglish) ? "for i dag" : "for today";
+  else if (hasTonight) qualifier = (wantsNorwegian && !wantsEnglish) ? "for i kveld" : "for tonight";
+  else if (!wantsNorwegian && englishSignal) qualifier = "";
+
+  if (!qualifier) return base;
+  if (new RegExp(`\\b${escapeRegExp(qualifier)}\\b`, "i").test(base)) return base;
+  if (/:$/.test(base)) {
+    return `${base.replace(/:\s*$/, "")} ${qualifier}:`;
+  }
+  return `${base} ${qualifier}:`;
+}
+
+function stripLeadingListTimingQualifier(text) {
+  return String(text || "")
+    .replace(
+      /^\s*(?:for\s+(?:tomorrow|today|tonight)|today|tomorrow|tonight|i\s+morgen|i\s+dag|i\s+kveld|til\s+i\s+morgen|til\s+i\s+dag|til\s+i\s+kveld|for\s+i\s+morgen|for\s+i\s+dag|for\s+i\s+kveld)\b[\s,:-]*/i,
+      ""
+    )
+    .trim();
+}
+
+function buildCompactListItems(content) {
+  let source = String(content || "").replace(/\r\n/g, " ").replace(/[ \t]+/g, " ").trim();
+  if (!source) return [];
+  if (/[;,]/.test(source) || /\b(?:og|and)\b/i.test(source) || source.includes("\n")) return [];
+
+  source = stripLeadingListTimingQualifier(source);
+  if (!source) return [];
+
+  const ingredientMatch = source.match(/^(.*?\b(?:ingredients?|ingredienser)\b)\s+(.+)$/i);
+  if (ingredientMatch?.[1] && ingredientMatch?.[2]) {
+    const head = normalizeListItemToken(ingredientMatch[1]);
+    const tailItems = ingredientMatch[2]
+      .split(/\s+/)
+      .map((token) => normalizeListItemToken(token))
+      .filter((token) => token && !isListContextOnlyItem(token));
+    const compact = [];
+    if (head && !isListContextOnlyItem(head)) compact.push(head);
+    compact.push(...tailItems);
+    return compact;
+  }
+
+  const tokens = source
+    .split(/\s+/)
+    .map((token) => normalizeListItemToken(token))
+    .filter((token) => token && !isListContextOnlyItem(token));
+  if (tokens.length < 3 || tokens.length > 8) return [];
+  if (!tokens.every((token) => isLikelySimpleListItem(token))) return [];
+  return tokens;
+}
+
 function buildImplicitBulletList(text) {
   const source = String(text || "").replace(/\r\n/g, "\n").trim();
   if (!source) return "";
@@ -2129,7 +2223,11 @@ function buildImplicitBulletList(text) {
   if (!BULLET_IMPLICIT_LIST_TRIGGER_RE.test(source)) return "";
 
   const candidate = stripListLeadPhrases(source);
-  const normalizedItems = buildCorrectedListItems(candidate);
+  let normalizedItems = buildCorrectedListItems(candidate);
+  if (normalizedItems.length < 2 && BULLET_COMPACT_LIST_STRONG_TRIGGER_RE.test(source)) {
+    const compactItems = buildCompactListItems(candidate);
+    if (compactItems.length >= 2) normalizedItems = compactItems;
+  }
 
   const uniqueItems = [];
   const seen = new Set();
@@ -2141,12 +2239,12 @@ function buildImplicitBulletList(text) {
 
   if (uniqueItems.length < 2) return "";
 
-  const simpleItems = uniqueItems.filter((item) => isLikelySimpleListItem(item));
+  const simpleItems = uniqueItems.filter((item) => isLikelySimpleListItem(item) && !isListContextOnlyItem(item));
   if (simpleItems.length < 2) return "";
   if (simpleItems.length < Math.ceil(uniqueItems.length * 0.6)) return "";
 
   const listBody = simpleItems.map((item) => `- ${item}`).join("\n");
-  const heading = inferRequestedListHeading(source);
+  const heading = applyListTimingQualifier(inferRequestedListHeading(source), source, listBody);
   return heading ? `${heading}\n${listBody}` : listBody;
 }
 
@@ -2295,7 +2393,8 @@ function preserveRequestedBulletLayout(sourceText, outputText) {
 
   const hasExplicit = hasExplicitBulletCommand(source);
   const implicitFromSource = hasExplicit ? "" : buildImplicitBulletList(source);
-  if (!hasExplicit && !implicitFromSource) return out;
+  const implicitFromOutput = hasExplicit ? "" : buildImplicitBulletList(out);
+  if (!hasExplicit && !implicitFromSource && !implicitFromOutput) return out;
   if (/^\s*[-•*]\s+/m.test(out)) return out;
 
   if (hasExplicit) {
@@ -2306,21 +2405,53 @@ function preserveRequestedBulletLayout(sourceText, outputText) {
     return out;
   }
 
-  if (implicitFromSource) {
+  if (implicitFromOutput) {
+    out = implicitFromOutput;
+  } else if (implicitFromSource) {
     out = implicitFromSource;
   }
   return out;
 }
 
-function preserveRequestedListHeading(sourceText, outputText) {
+function preserveRequestedListHeading(sourceText, outputText, preferredLanguage = "") {
   const source = String(sourceText || "").trim();
   let out = String(outputText || "").trim();
   if (!source || !out) return out;
 
-  const heading = inferRequestedListHeading(source);
+  const lines = out.split("\n");
+  if (lines.length) {
+    const bulletLines = lines
+      .map((line, idx) => {
+        const match = line.match(/^\s*[-•*]\s+(.+)$/);
+        return match ? { idx, item: String(match[1] || "").trim() } : null;
+      })
+      .filter(Boolean);
+
+    const nonContextCount = bulletLines.filter((entry) => !isListContextOnlyItem(entry.item)).length;
+    if (nonContextCount >= 2) {
+      const pruned = lines.filter((line) => {
+        const match = line.match(/^\s*[-•*]\s+(.+)$/);
+        if (!match) return true;
+        return !isListContextOnlyItem(String(match[1] || "").trim());
+      });
+      out = pruned.join("\n").trim();
+    }
+  }
+
+  let heading = inferRequestedListHeading(source);
+  heading = resolveListHeadingLanguage(heading, out, preferredLanguage);
+  heading = applyListTimingQualifier(heading, source, out, preferredLanguage);
   if (!heading) return out;
   if (!/^\s*[-•*]\s+/m.test(out)) return out;
   if (new RegExp(`^\\s*${escapeRegExp(heading)}\\s*$`, "mi").test(out)) return out;
+
+  const currentLines = out.split("\n");
+  const firstBulletIdx = currentLines.findIndex((line) => /^\s*[-•*]\s+/.test(line));
+  if (firstBulletIdx > 0) {
+    const normalizedLines = [heading, ...currentLines.slice(firstBulletIdx)];
+    out = normalizedLines.join("\n").trim();
+    return out;
+  }
 
   return `${heading}\n${out}`;
 }
@@ -2419,7 +2550,7 @@ function isLikelyWrongForTarget(text, targetLanguage) {
   }
 
   if (target.startsWith("en")) {
-    const hasNorwegianWords = /\b(hei|hilsen|vennlig|med vennlig hilsen|mvh)\b/i.test(lower);
+    const hasNorwegianWords = /\b(hei|hilsen|vennlig|med vennlig hilsen|mvh|handleliste|innkjøpsliste|ingredienser|trenger|ikke|i\s+morgen|i\s+dag|i\s+kveld|til\s+middag)\b/i.test(lower);
     return hasPolishChars || hasPolishWords || hasNorwegianWords || hasPlaceholder;
   }
 
@@ -2698,7 +2829,7 @@ function buildPolishSystemPrompt({
   return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${uncertaintyRule} ${recipientRule} ${spokenFormattingRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
 
-function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text, interpretationLevel }) {
+function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, targetLanguage, text, interpretationLevel }) {
   if (!POLISH_LOCAL_FASTPATH_ENABLED) return false;
   if (targetLanguageForced) return false;
 
@@ -2721,6 +2852,7 @@ function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, text,
   if (countWords(clean) > POLISH_LOCAL_FASTPATH_MAX_WORDS) return false;
   if (/[\n\r]/.test(clean)) return false;
   if (/\b(oversett|translate)\b/i.test(clean)) return false;
+  if (isLikelyWrongForTarget(clean, targetLanguage)) return false;
 
   return true;
 }
@@ -3094,7 +3226,7 @@ async function handlePolish(body, requestSignal) {
     if (text.length > 8000) return { status: 413, json: { error: "Too long." } };
 
     const requestedMode = String(body?.mode || "generic");
-    const style = normalizeStyle(body?.style);
+    const style = "clean";
     const interpretationLevel = normalizeInterpretationLevel(body?.interpretationLevel);
     const bundleId = String(body?.bundleId || "");
     const appName = String(body?.appName || "");
@@ -3169,6 +3301,7 @@ async function handlePolish(body, requestSignal) {
       mode,
       style,
       targetLanguageForced,
+      targetLanguage: lang,
       text: correctedInput,
       interpretationLevel
     })) {
@@ -3248,7 +3381,7 @@ async function handlePolish(body, requestSignal) {
     }
 
     finalText = preserveRequestedBulletLayout(correctedInput, finalText);
-    finalText = preserveRequestedListHeading(correctedInput, finalText);
+    finalText = preserveRequestedListHeading(correctedInput, finalText, lang);
     finalText = preserveRequestedParentheses(commandAwareInput, finalText);
     finalText = preserveRequestedEmojis(commandAwareInput, finalText);
     finalText = tidyBulletListOutput(finalText);
@@ -3335,7 +3468,7 @@ async function handleRewrite(body, requestSignal) {
     }
 
     lang = normalizeTargetLanguage(body?.targetLanguage);
-    style = normalizeStyle(body?.style);
+    style = "clean";
     draftReplyFromContext = body?.draftReplyFromContext === true;
     replyMemories = normalizeReplyMemories(body?.replyMemories);
     requestedRewriteMode = String(body?.mode || "generic").trim().toLowerCase();
@@ -3468,7 +3601,11 @@ async function handleRewrite(body, requestSignal) {
     const rewriteRawFormattingSource = `${instruction}\n${correctedInput}`;
     const rewriteFormattedSource = applySpokenFormattingPostprocess(rewriteRawFormattingSource);
     finalText = preserveRequestedBulletLayout(rewriteRawFormattingSource, finalText);
-    finalText = preserveRequestedListHeading(rewriteRawFormattingSource, finalText);
+    finalText = preserveRequestedListHeading(
+      rewriteRawFormattingSource,
+      finalText,
+      explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang)
+    );
     finalText = preserveRequestedParentheses(rewriteFormattedSource, finalText);
     finalText = preserveRequestedEmojis(rewriteFormattedSource, finalText).trim();
     finalText = tidyBulletListOutput(finalText);
@@ -3525,7 +3662,11 @@ async function handleRewrite(body, requestSignal) {
               out = normalizeEmailBody(out);
             }
             out = preserveRequestedBulletLayout(rewriteRawFormattingSource, out);
-            out = preserveRequestedListHeading(rewriteRawFormattingSource, out);
+            out = preserveRequestedListHeading(
+              rewriteRawFormattingSource,
+              out,
+              explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang)
+            );
             out = preserveRequestedParentheses(rewriteFormattedSource, out);
             out = preserveRequestedEmojis(rewriteFormattedSource, out);
             out = tidyBulletListOutput(out);
