@@ -2081,7 +2081,7 @@ struct MainPage: View {
                 HStack(spacing: 12) {
                     SimpleStatCard(title: "Day streak", value: streakLabel)
                     SimpleStatCard(title: "Words today", value: "\(history.todayWordCount)")
-                    SimpleStatCard(title: "Words total", value: "\(history.wordCount)")
+                    SimpleStatCard(title: "Time saved today", value: TimeSaved.formatted(for: history.todayWordCount))
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
