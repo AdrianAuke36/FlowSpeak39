@@ -524,6 +524,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func handleFnPressed() {
         guard !dictation.isCaptureActive else { return }
+        guard settings.hasAuthenticatedSession else {
+            Task { @MainActor in
+                settings.requestSignedOutPopup()
+            }
+            openHome()
+            updateStatusIcon(isRecording: false)
+            return
+        }
         if PermissionController.shared.checkAndPromptIfNeededForFnPress() {
             isPersistentCaptureLocked = false
             overlay.setLocked(false)

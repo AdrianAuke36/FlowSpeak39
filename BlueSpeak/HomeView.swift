@@ -132,6 +132,11 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissionGate()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .signedOutPopupRequested)) { _ in
+            if !settings.hasAuthenticatedSession && settings.consumePendingSignedOutPopup() {
+                showSignedOutPopup = true
+            }
+        }
         .onChange(of: settings.hasAuthenticatedSession) { _, isAuthenticated in
             if !isAuthenticated && settings.consumePendingSignedOutPopup() {
                 showSignedOutPopup = true
@@ -1587,6 +1592,20 @@ struct Sidebar: View {
                 Text("BlueSpeak")
                     .font(.system(size: 26, weight: .bold, design: .serif))
                     .foregroundStyle(AppTheme.primaryText)
+
+                Text(planBadgeLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(planBadgeTextColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(AppTheme.fieldMaterial)
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(planBadgeBorderColor, lineWidth: 1)
+                            )
+                    )
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 18)
@@ -1710,17 +1729,53 @@ struct Sidebar: View {
 
     private enum SubscriptionPlan {
         case free
-        case paid
+        case pro
+        case enterprise
     }
 
     private static let freeDailyWordLimit = 3000
 
     private var subscriptionPlan: SubscriptionPlan {
         switch normalizedPlanClaim {
-        case "pro", "team", "enterprise", "paid":
-            return .paid
+        case "enterprise":
+            return .enterprise
+        case "pro", "team", "paid":
+            return .pro
         default:
             return .free
+        }
+    }
+
+    private var planBadgeLabel: String {
+        switch subscriptionPlan {
+        case .free:
+            return "Free"
+        case .pro:
+            return "Pro"
+        case .enterprise:
+            return "Enterprise"
+        }
+    }
+
+    private var planBadgeTextColor: Color {
+        switch subscriptionPlan {
+        case .free:
+            return AppTheme.secondaryText
+        case .pro:
+            return AppTheme.accent
+        case .enterprise:
+            return AppTheme.success
+        }
+    }
+
+    private var planBadgeBorderColor: Color {
+        switch subscriptionPlan {
+        case .free:
+            return AppTheme.border
+        case .pro:
+            return AppTheme.accent.opacity(0.35)
+        case .enterprise:
+            return AppTheme.success.opacity(0.35)
         }
     }
 

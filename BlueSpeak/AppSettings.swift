@@ -9,6 +9,10 @@ import Foundation
 import Combine
 import AVFoundation
 
+extension Notification.Name {
+    static let signedOutPopupRequested = Notification.Name("BlueSpeak.signedOutPopupRequested")
+}
+
 enum AppLanguage: String, CaseIterable, Identifiable {
     case norwegian = "nb-NO"
     case english = "en-US"
@@ -971,9 +975,15 @@ final class AppSettings: ObservableObject {
     }
 
     @MainActor
+    func requestSignedOutPopup() {
+        UserDefaults.standard.set(true, forKey: StorageKey.pendingSignedOutPopup)
+        NotificationCenter.default.post(name: .signedOutPopupRequested, object: nil)
+    }
+
+    @MainActor
     func signOutSupabaseSession() {
         let previousEmail = supabaseUserEmail
-        UserDefaults.standard.set(true, forKey: StorageKey.pendingSignedOutPopup)
+        requestSignedOutPopup()
         cachedSupabaseRefreshToken = ""
         UserDefaults.standard.removeObject(forKey: StorageKey.supabaseRefreshToken)
         supabaseSessionExpiresAt = nil
