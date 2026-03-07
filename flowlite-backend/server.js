@@ -1468,11 +1468,12 @@ function normalizeListItemToken(value) {
   token = token
     .replace(/^[\-•*]\s*/, "")
     .replace(/^(?:og|and)\s+/i, "")
-    .replace(/^(?:shopping\s*list|shoppinglist|grocery\s*list|handlelist(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*/i, "")
-    .replace(/^(?:on\s+my\s+shopping\s+list|på\s+handlelist(?:e|en|a))\s*[:,]?\s*/i, "")
+    .replace(/^(?:(?:jeg|vi)\s+skal\s+ha\s+(?:en|ei|et)?\s+)?(?:shopping\s*list|shoppinglist|grocery\s*list|hand(?:le)?list(?:e|en|a)|innkjøpsliste)\s*(?:[:\-]|\s+med)?\s*/i, "")
+    .replace(/^(?:on\s+my\s+shopping\s+list|på\s+hand(?:le)?list(?:e|en|a))\s*[:,]?\s*/i, "")
     .replace(/^(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\s+/i, "")
     .replace(/^(?:til\s+[a-zæøå][a-zæøå\-']{1,24})\s+(?:trenger|må\s+ha|need|we\s+need)\s+/i, "")
-    .replace(/^(?:vi\s+)?(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|need|we\s+need|buy|get)\s+/i, "")
+    .replace(/^(?:(?:jeg|vi)\s+)?(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|need|we\s+need|buy|get)\s+/i, "")
+    .replace(/^med\s+/i, "")
     .replace(/[.,;:!?]+$/g, "")
     .trim();
 
@@ -1482,7 +1483,7 @@ function normalizeListItemToken(value) {
 function isListHeadingInstructionFragment(value) {
   const raw = String(value || "").toLowerCase().replace(/[ \t]+/g, " ").trim();
   if (!raw) return false;
-  return /^(?:shopping\s*list|shoppinglist|grocery\s*list|handlelist(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|vi\s+trenger|we\s+need)\b/.test(raw);
+  return /^(?:shopping\s*list|shoppinglist|grocery\s*list|hand(?:le)?list(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|vi\s+trenger|we\s+need)\b/.test(raw);
 }
 
 function normalizeListLookupKey(value) {
@@ -1995,10 +1996,12 @@ function normalizePunctuationArtifacts(text) {
 
 const BULLET_COMMAND_PREFIX_RE = /^\s*(?:(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\s+(?:dette\s+)?(?:som\s+)?(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)|(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste))\s*[:,-]?\s*/i;
 const BULLET_COMMAND_HINT_RE = /\b(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\b[\s\S]{0,48}\b(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)\b/i;
-const BULLET_IMPLICIT_LIST_TRIGGER_RE = /\b(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|handlelist(?:e|en|a)|ingredienser|we\s+need|need|shopping\s+list|shoppinglist|buy|get)\b/i;
+const BULLET_IMPLICIT_LIST_TRIGGER_RE = /\b(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|hand(?:le)?list(?:e|en|a)|ingredienser|we\s+need|need|shopping\s+list|shoppinglist|buy|get)\b/i;
 const LIST_HEADING_NO_RE = "Handleliste";
 const LIST_HEADING_EN_RE = "Shopping list";
-const SHOPPING_LIST_HEADING_TRIGGER_RE = /\b(?:on\s+my\s+shopping\s+list|shopping\s*list|shoppinglist|grocery\s*list|for\s+dinner|handlelist(?:e|en|a)|innkjøpsliste|til\s+middag|må\s+kjøpe|kjøp|buy|trenger\s+vi|vi\s+trenger|we\s+need|need)\b/i;
+const DINNER_LIST_HEADING_NO_RE = "Det vi trenger til middag:";
+const DINNER_LIST_HEADING_EN_RE = "What we need for dinner:";
+const SHOPPING_LIST_HEADING_TRIGGER_RE = /\b(?:on\s+my\s+shopping\s+list|shopping\s*list|shoppinglist|grocery\s*list|for\s+dinner|hand(?:le)?list(?:e|en|a)|innkjøpsliste|til\s+middag|må\s+kjøpe|kjøp|buy|trenger\s+vi|vi\s+trenger|we\s+need|need)\b/i;
 const POINT_MARKER_RE = /\b(?:punkt|point)\s*(?:\d+|en|ett|to|tre|fire|fem|seks|sju|syv|åtte|ni|ti|one|two|three|four|five|six|seven|eight|nine|ten)\s*[:.)-]?\s*/ig;
 const PARENTHESIS_COMMAND_RE = /\b(?:åpen|open|start|venstre|left)\s+parentes\b|\b(?:lukk|lukk|slutt|close|høyre|right)\s+parentes\b|\b(?:i\s+parentes|in\s+parentheses)\b/i;
 const SPOKEN_PUNCTUATION_HINT_RE = /\b(?:skråstrek|skraastrek|slash|slahs|slashtegn|backslash|bakoverstrek|komma|comma|punktum|period|full\s*stop|kolon|colon|semikolon|semicolon|utropstegn|exclamation\s*(?:mark|point)|spørsmålstegn|sporsmalstegn|question\s*mark|apostrof|apostrophe|anførselstegn|anforselstegn|sitattegn|quotation\s*mark|quote|bindestrek|hyphen|dash|en\s*dash|em\s*dash|ellipse|ellipsis|tre\s+prikker|three\s+dots|parentes|parenthesis|bracket|brace|krøllparentes|krollparentes)\b/i;
@@ -2083,21 +2086,22 @@ function stripListLeadPhrases(text) {
   if (!out) return out;
 
   out = out.replace(
-    /^\s*(?:shopping\s*list|shoppinglist|grocery\s*list|handlelist(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|vi\s+trenger|we\s+need)\s+[^,\n;]+(?:\s*[,;]\s*|$)/i,
+    /^\s*(?:shopping\s*list|shoppinglist|grocery\s*list|hand(?:le)?list(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|vi\s+trenger|we\s+need)\s+[^,\n;]+(?:\s*[,;]\s*|$)/i,
     ""
   );
   out = out.replace(
-    /^\s*(?:shopping\s*list|shoppinglist|grocery\s*list|handlelist(?:e|en|a)|innkjøpsliste)\s*[:,]?\s*/i,
+    /^\s*(?:(?:jeg|vi)\s+skal\s+ha\s+(?:en|ei|et)?\s+)?(?:shopping\s*list|shoppinglist|grocery\s*list|hand(?:le)?list(?:e|en|a)|innkjøpsliste)\s*(?:[:,]|\s+med)?\s*/i,
     ""
   );
   out = out.replace(
-    /^\s*(?:on\s+my\s+shopping\s+list|på\s+handlelist(?:e|en|a))\s*[:,]?\s*/i,
+    /^\s*(?:on\s+my\s+shopping\s+list|på\s+hand(?:le)?list(?:e|en|a))\s*[:,]?\s*/i,
     ""
   );
   out = out.replace(
-    /^\s*(?:til\s+[^\s,.;:!?]+(?:\s+[^\s,.;:!?]+){0,2}\s+)?(?:trenger\s+vi|vi\s+trenger|we\s+need|need|kjøp|buy|get|handleliste(?:n)?|ingredienser(?:\s+til\s+[^\s,.;:!?]+)?)\s+/i,
+    /^\s*(?:(?:jeg|vi)\s+skal\s+ha\s+(?:en|ei|et)?\s+)?(?:til\s+[^\s,.;:!?]+(?:\s+[^\s,.;:!?]+){0,2}\s+)?(?:trenger\s+vi|vi\s+trenger|we\s+need|need|kjøp|buy|get|hand(?:le)?liste(?:n)?|ingredienser(?:\s+til\s+[^\s,.;:!?]+)?)\s*(?:med\s+)?/i,
     ""
   );
+  out = out.replace(/^\s*med\s+/i, "");
   out = out.replace(/\b(?:vi\s+trenger|trenger\s+vi|we\s+need|need)\b/ig, ", ");
   out = out.replace(/\b(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\b/ig, ", ");
   return out.trim();
@@ -2141,7 +2145,7 @@ function buildImplicitBulletList(text) {
   if (simpleItems.length < 2) return "";
   if (simpleItems.length < Math.ceil(uniqueItems.length * 0.6)) return "";
 
-  const listBody = simpleItems.map((item) => `- ${capitalizeFirstLetter(item)}`).join("\n");
+  const listBody = simpleItems.map((item) => `- ${item}`).join("\n");
   const heading = inferRequestedListHeading(source);
   return heading ? `${heading}\n${listBody}` : listBody;
 }
@@ -2239,6 +2243,12 @@ function inferRequestedListHeading(sourceText) {
   const source = String(sourceText || "").trim();
   if (!source) return "";
   if (!SHOPPING_LIST_HEADING_TRIGGER_RE.test(source)) return "";
+  if (/\bfor\s+dinner\b/i.test(source)) {
+    return DINNER_LIST_HEADING_EN_RE;
+  }
+  if (/\btil\s+middag\b/i.test(source)) {
+    return DINNER_LIST_HEADING_NO_RE;
+  }
   if (/\b(?:shopping\s*list|shoppinglist|grocery\s*list|on\s+my\s+shopping\s+list)\b/i.test(source)) {
     return LIST_HEADING_EN_RE;
   }
@@ -2649,7 +2659,7 @@ function buildPolishSystemPrompt({
         ? "Translate for intended meaning and the best possible phrasing. Resolve fragmented speech, implied punctuation, and rough wording into the clearest natural translation."
         : "Preserve meaning, names, numbers, and formatting.";
 
-    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Examples: 'lag bulletpoints' should become a bullet list, spoken emoji words like 'smilefjes' should become actual emoji, spoken punctuation words should become symbols (for example 'slash/slahs' -> '/', 'komma' -> ',', 'punktum' -> '.'), and spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
+    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Also, when the content clearly represents a short-item list (for example shopping list, ingredient list, checklist, todo items, or 'trenger vi ...') format it as a clean bullet list. For shopping/grocery intent, include exactly one heading ('Handleliste' or 'Shopping list') and never duplicate that heading as a bullet item. Keep only actual list items in bullets. Spoken emoji words like 'smilefjes' should become actual emoji. Spoken punctuation words should become symbols (for example 'slash/slahs' -> '/', 'komma' -> ',', 'punktum' -> '.'). Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
     const uncertaintyRule = interpretationLevel === "meaning"
       ? "If key details are ambiguous, keep the wording general and do not guess specifics."
       : "";
@@ -2683,7 +2693,7 @@ function buildPolishSystemPrompt({
   const recipientRule = mode === "email_body"
     ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
     : "";
-  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. 'lag bulletpoints' -> bullet list output, spoken emoji words like 'smilefjes' -> actual emoji, spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.', and spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
+  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. Also infer list layout when intent is clearly list-like (shopping list, ingredients, todo/checklist, 'trenger vi ...'): output a concise bullet list. For shopping/grocery intent, include exactly one heading ('Handleliste' or 'Shopping list') and do not repeat the heading inside bullets. Keep only real items as bullet points. Spoken emoji words like 'smilefjes' -> actual emoji. Spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.'. Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
 
   return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${uncertaintyRule} ${recipientRule} ${spokenFormattingRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
@@ -3370,7 +3380,7 @@ async function handleRewrite(body, requestSignal) {
       ? "The spoken instruction is very brief. Keep the reply concise and express only that point without elaboration."
       : "";
     const singleDraftRule = "Return exactly one final draft only. Never include alternatives, notes, prefixes, or placeholders.";
-    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. If asked for bullet points, output bullet points. Convert spoken emoji words like 'smilefjes' to actual emoji where appropriate. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
+    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. If asked for bullet points, output bullet points. If the text clearly indicates list intent (shopping list, ingredient list, todo/checklist), use bullet points even without an explicit bullet command. For shopping/grocery intent, include exactly one heading ('Handleliste' or 'Shopping list') and do not include that heading as a bullet item. Convert spoken emoji words like 'smilefjes' to actual emoji where appropriate. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
     const memoryRule = replyMemories.length
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
       : "";

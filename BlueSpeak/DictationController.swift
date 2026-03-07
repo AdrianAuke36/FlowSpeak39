@@ -553,7 +553,7 @@ final class DictationController: NSObject {
         case .emailBody:
             return normalizeEmailBody(corrected)
         default:
-            return corrected
+            return applyImplicitListFormattingIfNeeded(corrected)
         }
     }
 
@@ -661,6 +661,233 @@ final class DictationController: NSObject {
         )
 
         return out
+    }
+
+    private func applyImplicitListFormattingIfNeeded(_ text: String) -> String {
+        let source = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if source.isEmpty { return source }
+        if source.range(of: #"^\s*[-•*]\s+"#, options: .regularExpression) != nil { return source }
+        if source.range(of: #"\b(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|hand(?:le)?list(?:e|en|a)|shopping\s*list|shoppinglist|grocery\s*list|ingredienser|for\s+dinner|til\s+middag|we\s+need|need|buy|get)\b"#, options: [.regularExpression, .caseInsensitive]) == nil {
+            return source
+        }
+
+        let stripped = stripListLeadPhrasesLocal(source)
+        let rawItems = splitListItemsLocal(stripped)
+        if rawItems.isEmpty { return source }
+
+        var finalItems: [String] = []
+        var indexByKey: [String: Int] = [:]
+
+        for raw in rawItems {
+            let normalized = normalizeListItemLocal(raw)
+            if normalized.isEmpty { continue }
+
+            if let negated = extractNegatedListItemLocal(from: normalized) {
+                if let idx = indexByKey[negated] {
+                    finalItems[idx] = ""
+                    indexByKey.removeValue(forKey: negated)
+                }
+                continue
+            }
+
+            let key = normalized
+            if indexByKey[key] != nil { continue }
+            indexByKey[key] = finalItems.count
+            finalItems.append(normalized)
+        }
+
+        let items = finalItems
+            .filter { !$0.isEmpty && isLikelySimpleListItemLocal($0) }
+        if items.count < 2 { return source }
+
+        let heading = inferLocalListHeading(from: source)
+        let body = items.map { "- \($0)" }.joined(separator: "\n")
+        if let heading, !heading.isEmpty {
+            return "\(heading)\n\(body)"
+        }
+        return body
+    }
+
+    private func inferLocalListHeading(from source: String) -> String? {
+        let lower = source.lowercased()
+
+        if lower.range(of: #"\bfor\s+dinner\b"#, options: .regularExpression) != nil {
+            return "What we need for dinner:"
+        }
+        if lower.range(of: #"\btil\s+middag\b"#, options: .regularExpression) != nil {
+            return "Det vi trenger til middag:"
+        }
+        if lower.range(of: #"\b(?:shopping\s*list|shoppinglist|grocery\s*list|on\s+my\s+shopping\s+list)\b"#, options: .regularExpression) != nil {
+            return "Shopping list"
+        }
+        if lower.range(of: #"\b(?:hand(?:le)?list(?:e|en|a)|innkjøpsliste)\b"#, options: .regularExpression) != nil {
+            return "Handleliste"
+        }
+        return nil
+    }
+
+    private func stripListLeadPhrasesLocal(_ text: String) -> String {
+        var out = text
+        let replacements: [(pattern: String, replace: String)] = [
+            (#"^\s*(?:shopping\s*list|shoppinglist|grocery\s*list|hand(?:le)?list(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|vi\s+trenger|we\s+need)\s+[^,\n;]+(?:\s*[,;]\s*|$)"#, ""),
+            (#"^\s*(?:(?:jeg|vi)\s+skal\s+ha\s+(?:en|ei|et)?\s+)?(?:shopping\s*list|shoppinglist|grocery\s*list|hand(?:le)?list(?:e|en|a)|innkjøpsliste)\s*(?:[:,]|\s+med)?\s*"#, ""),
+            (#"^\s*(?:on\s+my\s+shopping\s+list|på\s+hand(?:le)?list(?:e|en|a))\s*[:,]?\s*"#, ""),
+            (#"^\s*(?:(?:jeg|vi)\s+skal\s+ha\s+(?:en|ei|et)?\s+)?(?:til\s+[^\s,.;:!?]+(?:\s+[^\s,.;:!?]+){0,2}\s+)?(?:trenger\s+vi|vi\s+trenger|we\s+need|need|kjøp|buy|get|hand(?:le)?liste(?:n)?|ingredienser(?:\s+til\s+[^\s,.;:!?]+)?)\s*(?:med\s+)?"#, ""),
+            (#"^\s*med\s+"#, "")
+        ]
+
+        for replacement in replacements {
+            out = out.replacingOccurrences(
+                of: replacement.pattern,
+                with: replacement.replace,
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        out = out.replacingOccurrences(
+            of: #"\b(?:vi\s+trenger|trenger\s+vi|we\s+need|need)\b"#,
+            with: ", ",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        out = out.replacingOccurrences(
+            of: #"\b(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\b"#,
+            with: ", ",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func splitListItemsLocal(_ content: String) -> [String] {
+        var working = content
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if working.isEmpty { return [] }
+
+        working = working.replacingOccurrences(
+            of: #"\b(?:punkt|point)\s*(?:\d+|en|ett|to|tre|fire|fem|seks|sju|syv|åtte|ni|ti|one|two|three|four|five|six|seven|eight|nine|ten)\s*[:.)-]?\s*"#,
+            with: "\n",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        working = working.replacingOccurrences(
+            of: #"\s*\n+\s*"#,
+            with: "\n",
+            options: .regularExpression
+        )
+
+        var parts: [String]
+        if working.contains("\n") {
+            parts = working.components(separatedBy: CharacterSet.newlines)
+        } else if working.range(of: #"[;,]"#, options: .regularExpression) != nil {
+            parts = working.components(separatedBy: CharacterSet(charactersIn: ";,"))
+        } else if working.range(of: #"\b(?:og|and)\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            let markerSplit = working.replacingOccurrences(
+                of: #"\s+\b(?:og|and)\b\s+"#,
+                with: "\n",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            parts = markerSplit.components(separatedBy: CharacterSet.newlines)
+        } else {
+            parts = [working]
+        }
+
+        var expanded: [String] = []
+        for part in parts {
+            let segment = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if segment.isEmpty { continue }
+            let splitAndRaw = segment.replacingOccurrences(
+                of: #"\s+\b(?:og|and)\b\s+"#,
+                with: "\n",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            let splitAnd = splitAndRaw.components(separatedBy: CharacterSet.newlines)
+            if splitAnd.count > 1 {
+                for item in splitAnd where !item.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    expanded.append(item)
+                }
+            } else {
+                expanded.append(segment)
+            }
+        }
+
+        return expanded.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+
+    private func normalizeListItemLocal(_ value: String) -> String {
+        var token = value
+            .lowercased()
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if token.isEmpty { return "" }
+
+        let replacements: [String] = [
+            #"^[\-•*]\s*"#,
+            #"^(?:og|and)\s+"#,
+            #"^(?:(?:jeg|vi)\s+skal\s+ha\s+(?:en|ei|et)?\s+)?(?:shopping\s*list|shoppinglist|grocery\s*list|hand(?:le)?list(?:e|en|a)|innkjøpsliste)\s*(?:[:\-]|\s+med)?\s*"#,
+            #"^(?:on\s+my\s+shopping\s+list|på\s+hand(?:le)?list(?:e|en|a))\s*[:,]?\s*"#,
+            #"^(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\s+"#,
+            #"^(?:til\s+[a-zæøå][a-zæøå\-']{1,24})\s+(?:trenger|må\s+ha|need|we\s+need)\s+"#,
+            #"^(?:(?:jeg|vi)\s+)?(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|need|we\s+need|buy|get)\s+"#,
+            #"^med\s+"#
+        ]
+
+        for pattern in replacements {
+            token = token.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        token = token.replacingOccurrences(
+            of: #"[.,;:!?]+$"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        return token.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func extractNegatedListItemLocal(from value: String) -> String? {
+        let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if token.isEmpty { return nil }
+
+        guard let regex = try? NSRegularExpression(
+            pattern: #"^(?:men\s+)?(?:eh+|ehm+|øh+|øhm+|uh+|uhm+|um+|umm+)?\s*(?:(?:nei|no)\s+(?:(?:ikke|not)\s+)?)?(.+)$"#,
+            options: [.caseInsensitive]
+        ) else {
+            return nil
+        }
+
+        let range = NSRange(token.startIndex..<token.endIndex, in: token)
+        guard let match = regex.firstMatch(in: token, options: [], range: range),
+              let capturedRange = Range(match.range(at: 1), in: token) else {
+            return nil
+        }
+
+        let hasNegationCue = token.range(
+            of: #"^(?:men\s+)?(?:eh+|ehm+|øh+|øhm+|uh+|uhm+|um+|umm+)?\s*(?:nei|no)\b|^(?:ikke|not|uten|without)\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        if !hasNegationCue { return nil }
+
+        let candidate = normalizeListItemLocal(String(token[capturedRange]))
+        return candidate.isEmpty ? nil : candidate
+    }
+
+    private func isLikelySimpleListItemLocal(_ text: String) -> Bool {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if value.isEmpty { return false }
+
+        let words = value.split(whereSeparator: \.isWhitespace)
+        if words.count < 1 || words.count > 4 { return false }
+        if value.range(of: #"^(?:å|to|ellers|if|hvis|fordi)\b"#, options: .regularExpression) != nil { return false }
+        if value.range(of: #"^(?:jeg|vi|du|dere|han|hun|de|it|we|you|they)\b"#, options: .regularExpression) != nil { return false }
+        if value.range(of: #"\b(?:er|blir|ble|skal|må|kan|kunne|vil|ville|har|hadde|får|fikk|is|are|was|were|be|being|have|has|had|will|would|should|could)\b"#, options: .regularExpression) != nil {
+            return false
+        }
+        return true
     }
 
     private func normalizeEmailBody(_ text: String) -> String {
