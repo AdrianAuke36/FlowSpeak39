@@ -2001,6 +2001,7 @@ const LIST_HEADING_EN_RE = "Shopping list";
 const SHOPPING_LIST_HEADING_TRIGGER_RE = /\b(?:on\s+my\s+shopping\s+list|shopping\s*list|shoppinglist|grocery\s*list|for\s+dinner|handlelist(?:e|en|a)|innkjøpsliste|til\s+middag|må\s+kjøpe|kjøp|buy|trenger\s+vi|vi\s+trenger|we\s+need|need)\b/i;
 const POINT_MARKER_RE = /\b(?:punkt|point)\s*(?:\d+|en|ett|to|tre|fire|fem|seks|sju|syv|åtte|ni|ti|one|two|three|four|five|six|seven|eight|nine|ten)\s*[:.)-]?\s*/ig;
 const PARENTHESIS_COMMAND_RE = /\b(?:åpen|open|start|venstre|left)\s+parentes\b|\b(?:lukk|lukk|slutt|close|høyre|right)\s+parentes\b|\b(?:i\s+parentes|in\s+parentheses)\b/i;
+const SPOKEN_PUNCTUATION_HINT_RE = /\b(?:skråstrek|skraastrek|slash|slahs|slashtegn|backslash|bakoverstrek|komma|comma|punktum|period|full\s*stop|kolon|colon|semikolon|semicolon|utropstegn|exclamation\s*(?:mark|point)|spørsmålstegn|sporsmalstegn|question\s*mark|apostrof|apostrophe|anførselstegn|anforselstegn|sitattegn|quotation\s*mark|quote|bindestrek|hyphen|dash|en\s*dash|em\s*dash|ellipse|ellipsis|tre\s+prikker|three\s+dots|parentes|parenthesis|bracket|brace|krøllparentes|krollparentes)\b/i;
 const SPOKEN_EMOJI_ALIASES = [
   { pattern: /\b(?:emoji\s+)?smilefjes\b/gi, emoji: "🙂" },
   { pattern: /\b(?:emoji\s+)?smiley\b/gi, emoji: "🙂" },
@@ -2014,6 +2015,25 @@ const SPOKEN_EMOJI_ALIASES = [
   { pattern: /\b(?:emoji\s+)?rakett\b/gi, emoji: "🚀" },
   { pattern: /\b(?:emoji\s+)?ild\b/gi, emoji: "🔥" },
   { pattern: /\b(?:emoji\s+)?hake\b/gi, emoji: "✅" }
+];
+const SPOKEN_PUNCTUATION_ALIASES = [
+  { pattern: /\b(?:skråstrek|skraastrek|slash|slahs|slashtegn)\b/gi, mark: "/" },
+  { pattern: /\b(?:backslash|bakoverstrek)\b/gi, mark: "\\" },
+  { pattern: /\b(?:komma|comma)\b/gi, mark: "," },
+  { pattern: /\b(?:punktum|period|full\s*stop)\b/gi, mark: "." },
+  { pattern: /\b(?:kolon|colon)\b/gi, mark: ":" },
+  { pattern: /\b(?:semikolon|semicolon)\b/gi, mark: ";" },
+  { pattern: /\b(?:utropstegn|exclamation\s*(?:mark|point))\b/gi, mark: "!" },
+  { pattern: /\b(?:spørsmålstegn|sporsmalstegn|question\s*mark)\b/gi, mark: "?" },
+  { pattern: /\b(?:apostrof|apostrophe)\b/gi, mark: "'" },
+  { pattern: /\b(?:anførselstegn|anforselstegn|sitattegn|quotation\s*mark|quote)\b/gi, mark: "\"" },
+  { pattern: /\b(?:bindestrek|hyphen)\b/gi, mark: "-" },
+  { pattern: /\b(?:dash|en\s*dash|em\s*dash)\b/gi, mark: " – " },
+  { pattern: /\b(?:ellipse|ellipsis|tre\s+prikker|three\s+dots)\b/gi, mark: "…" },
+  { pattern: /\b(?:åpen|open)\s+(?:square\s+)?bracket\b/gi, mark: "[" },
+  { pattern: /\b(?:lukk|close)\s+(?:square\s+)?bracket\b/gi, mark: "]" },
+  { pattern: /\b(?:åpen|open)\s+(?:curly\s+)?brace\b/gi, mark: "{" },
+  { pattern: /\b(?:lukk|close)\s+(?:curly\s+)?brace\b/gi, mark: "}" }
 ];
 
 function hasExplicitBulletCommand(text) {
@@ -2144,8 +2164,8 @@ function applySpokenParenthesisCommands(text) {
   if (!out) return out;
 
   out = out
-    .replace(/\b(?:åpen|open|start|venstre|left)\s+parentes\b/gi, "(")
-    .replace(/\b(?:lukk|lukk|slutt|close|høyre|right)\s+parentes\b/gi, ")")
+    .replace(/\b(?:åpen|open|start|venstre|left)\s+(?:parentes|parenthesis)\b/gi, "(")
+    .replace(/\b(?:lukk|slutt|close|høyre|right)\s+(?:parentes|parenthesis)\b/gi, ")")
     .replace(/\b(?:i\s+parentes|in\s+parentheses)\s*[:,]?\s*([^\n,.!?;]+)/gi, "($1)");
 
   out = out
@@ -2176,6 +2196,28 @@ function replaceSpokenEmojiAliases(text) {
   return out;
 }
 
+function replaceSpokenPunctuationAliases(text) {
+  let out = String(text || "");
+  if (!out) return out;
+
+  for (const { pattern, mark } of SPOKEN_PUNCTUATION_ALIASES) {
+    out = out.replace(pattern, mark);
+  }
+
+  out = out
+    .replace(/([\p{L}\p{N}])\s*\/\s*([\p{L}\p{N}])/gu, "$1/$2")
+    .replace(/([\p{L}\p{N}])\s*\\\s*([\p{L}\p{N}])/gu, "$1\\$2")
+    .replace(/[ \t]+([,.;:!?])/g, "$1")
+    .replace(/([,.;:!?])([^\s\n)\]}])/g, "$1 $2")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return out;
+}
+
 function applySpokenFormattingPostprocess(text) {
   let out = String(text || "");
   if (!out) return out;
@@ -2188,6 +2230,7 @@ function applySpokenFormattingPostprocess(text) {
     if (implicitBullet) out = implicitBullet;
   }
   out = applySpokenParenthesisCommands(out);
+  out = replaceSpokenPunctuationAliases(out);
   out = replaceSpokenEmojiAliases(out);
   return out;
 }
@@ -2207,6 +2250,7 @@ function hasSpokenFormattingCommandHints(text) {
   if (!source) return false;
   if (hasExplicitBulletCommand(source)) return true;
   if (PARENTHESIS_COMMAND_RE.test(source)) return true;
+  if (SPOKEN_PUNCTUATION_HINT_RE.test(source)) return true;
   return false;
 }
 
@@ -2605,7 +2649,7 @@ function buildPolishSystemPrompt({
         ? "Translate for intended meaning and the best possible phrasing. Resolve fragmented speech, implied punctuation, and rough wording into the clearest natural translation."
         : "Preserve meaning, names, numbers, and formatting.";
 
-    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Examples: 'lag bulletpoints' should become a bullet list, spoken emoji words like 'smilefjes' should become actual emoji, and spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
+    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Examples: 'lag bulletpoints' should become a bullet list, spoken emoji words like 'smilefjes' should become actual emoji, spoken punctuation words should become symbols (for example 'slash/slahs' -> '/', 'komma' -> ',', 'punktum' -> '.'), and spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
     const uncertaintyRule = interpretationLevel === "meaning"
       ? "If key details are ambiguous, keep the wording general and do not guess specifics."
       : "";
@@ -2639,7 +2683,7 @@ function buildPolishSystemPrompt({
   const recipientRule = mode === "email_body"
     ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
     : "";
-  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. 'lag bulletpoints' -> bullet list output, spoken emoji words like 'smilefjes' -> actual emoji, and spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
+  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. 'lag bulletpoints' -> bullet list output, spoken emoji words like 'smilefjes' -> actual emoji, spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.', and spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
 
   return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${uncertaintyRule} ${recipientRule} ${spokenFormattingRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
@@ -3326,7 +3370,7 @@ async function handleRewrite(body, requestSignal) {
       ? "The spoken instruction is very brief. Keep the reply concise and express only that point without elaboration."
       : "";
     const singleDraftRule = "Return exactly one final draft only. Never include alternatives, notes, prefixes, or placeholders.";
-    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. If asked for bullet points, output bullet points. Convert spoken emoji words like 'smilefjes' to actual emoji where appropriate. Apply requested parentheses and remove command words once formatting is applied.";
+    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. If asked for bullet points, output bullet points. Convert spoken emoji words like 'smilefjes' to actual emoji where appropriate. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
     const memoryRule = replyMemories.length
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
       : "";

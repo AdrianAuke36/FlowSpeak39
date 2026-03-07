@@ -574,11 +574,93 @@ final class DictationController: NSObject {
             }
             out = replacingMatches(in: out, using: LocalPolishRegex.fillerWords, with: "$1")
         }
+        out = applySpokenPunctuationAliases(out)
         out = replacingMatches(in: out, using: EmailBodyRegex.spaceBeforePunctuation, with: "$1")
         out = replacingMatches(in: out, using: EmailBodyRegex.trailingWhitespace, with: "")
         out = replacingMatches(in: out, using: EmailBodyRegex.extraNewlines, with: "\n\n")
 
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func applySpokenPunctuationAliases(_ text: String) -> String {
+        var out = text
+        if out.isEmpty { return out }
+
+        let aliases: [(pattern: String, mark: String)] = [
+            (#"\b(?:skråstrek|skraastrek|slash|slahs|slashtegn)\b"#, "/"),
+            (#"\b(?:backslash|bakoverstrek)\b"#, "\\"),
+            (#"\b(?:komma|comma)\b"#, ","),
+            (#"\b(?:punktum|period|full\s*stop)\b"#, "."),
+            (#"\b(?:kolon|colon)\b"#, ":"),
+            (#"\b(?:semikolon|semicolon)\b"#, ";"),
+            (#"\b(?:utropstegn|exclamation\s*(?:mark|point))\b"#, "!"),
+            (#"\b(?:spørsmålstegn|sporsmalstegn|question\s*mark)\b"#, "?"),
+            (#"\b(?:apostrof|apostrophe)\b"#, "'"),
+            (#"\b(?:anførselstegn|anforselstegn|sitattegn|quotation\s*mark|quote)\b"#, "\""),
+            (#"\b(?:bindestrek|hyphen)\b"#, "-"),
+            (#"\b(?:dash|en\s*dash|em\s*dash)\b"#, " – "),
+            (#"\b(?:ellipse|ellipsis|tre\s+prikker|three\s+dots)\b"#, "…"),
+            (#"\b(?:åpen|open)\s+(?:square\s+)?bracket\b"#, "["),
+            (#"\b(?:lukk|close)\s+(?:square\s+)?bracket\b"#, "]"),
+            (#"\b(?:åpen|open)\s+(?:curly\s+)?brace\b"#, "{"),
+            (#"\b(?:lukk|close)\s+(?:curly\s+)?brace\b"#, "}")
+        ]
+
+        for alias in aliases {
+            out = out.replacingOccurrences(
+                of: alias.pattern,
+                with: alias.mark,
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        out = out.replacingOccurrences(
+            of: #"([\p{L}\p{N}])\s*/\s*([\p{L}\p{N}])"#,
+            with: "$1/$2",
+            options: .regularExpression
+        )
+        out = out.replacingOccurrences(
+            of: #"\b(?:åpen|open|start|venstre|left)\s+(?:parentes|parenthesis)\b"#,
+            with: "(",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        out = out.replacingOccurrences(
+            of: #"\b(?:lukk|slutt|close|høyre|right)\s+(?:parentes|parenthesis)\b"#,
+            with: ")",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        out = out.replacingOccurrences(
+            of: #"[ \t]+([,.;:!?])"#,
+            with: "$1",
+            options: .regularExpression
+        )
+        out = out.replacingOccurrences(
+            of: #"([,.;:!?])([^\s\n)\]}])"#,
+            with: "$1 $2",
+            options: .regularExpression
+        )
+        out = out.replacingOccurrences(
+            of: #"\(\s+"#,
+            with: "(",
+            options: .regularExpression
+        )
+        out = out.replacingOccurrences(
+            of: #"\s+\)"#,
+            with: ")",
+            options: .regularExpression
+        )
+        out = out.replacingOccurrences(
+            of: #"[ \t]{2,}"#,
+            with: " ",
+            options: .regularExpression
+        )
+        out = out.replacingOccurrences(
+            of: #"\n{3,}"#,
+            with: "\n\n",
+            options: .regularExpression
+        )
+
+        return out
     }
 
     private func normalizeEmailBody(_ text: String) -> String {
