@@ -1468,6 +1468,7 @@ function normalizeListItemToken(value) {
   token = token
     .replace(/^[\-•*]\s*/, "")
     .replace(/^(?:og|and)\s+/i, "")
+    .replace(/^(?:shopping\s*list|shoppinglist|grocery\s*list|handlelist(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*/i, "")
     .replace(/^(?:on\s+my\s+shopping\s+list|på\s+handlelist(?:e|en|a))\s*[:,]?\s*/i, "")
     .replace(/^(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\s+/i, "")
     .replace(/^(?:til\s+[a-zæøå][a-zæøå\-']{1,24})\s+(?:trenger|må\s+ha|need|we\s+need)\s+/i, "")
@@ -1476,6 +1477,12 @@ function normalizeListItemToken(value) {
     .trim();
 
   return token;
+}
+
+function isListHeadingInstructionFragment(value) {
+  const raw = String(value || "").toLowerCase().replace(/[ \t]+/g, " ").trim();
+  if (!raw) return false;
+  return /^(?:shopping\s*list|shoppinglist|grocery\s*list|handlelist(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|vi\s+trenger|we\s+need)\b/.test(raw);
 }
 
 function normalizeListLookupKey(value) {
@@ -1512,6 +1519,7 @@ function buildCorrectedListItems(content) {
   const indexByKey = new Map();
 
   for (const rawItem of rawItems) {
+    if (isListHeadingInstructionFragment(rawItem)) continue;
     const normalized = normalizeListItemToken(rawItem);
     if (!normalized) continue;
 
@@ -2054,6 +2062,14 @@ function stripListLeadPhrases(text) {
   let out = String(text || "").trim();
   if (!out) return out;
 
+  out = out.replace(
+    /^\s*(?:shopping\s*list|shoppinglist|grocery\s*list|handlelist(?:e|en|a)|innkjøpsliste)\s*[:\-]\s*(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|vi\s+trenger|we\s+need)\s+[^,\n;]+(?:\s*[,;]\s*|$)/i,
+    ""
+  );
+  out = out.replace(
+    /^\s*(?:shopping\s*list|shoppinglist|grocery\s*list|handlelist(?:e|en|a)|innkjøpsliste)\s*[:,]?\s*/i,
+    ""
+  );
   out = out.replace(
     /^\s*(?:on\s+my\s+shopping\s+list|på\s+handlelist(?:e|en|a))\s*[:,]?\s*/i,
     ""
