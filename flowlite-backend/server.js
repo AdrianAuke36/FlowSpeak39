@@ -2441,6 +2441,14 @@ function preserveRequestedParentheses(sourceText, outputText) {
   const source = String(sourceText || "").trim();
   let out = String(outputText || "").trim();
   if (!source || !out) return out;
+
+  // Guard: only preserve/insert parentheses when the spoken instruction
+  // explicitly asks for parenthetical formatting. Otherwise, source context
+  // (for example quoted prices like "(115,- pr stk.)") must not be injected.
+  const instructionLine = source.split(/\r?\n/, 1)[0] || source;
+  const explicitParenthesisRequest = /\b(?:parentes|parenthesis|parenthetical|i parentes|in parentheses|set in parentheses|with parentheses|bruk parentes)\b/i.test(instructionLine);
+  if (!explicitParenthesisRequest) return out;
+
   if (!source.includes("(") || !source.includes(")")) return out;
   if (/\([^()]+\)/.test(out)) return out;
 
