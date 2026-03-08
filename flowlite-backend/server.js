@@ -2568,11 +2568,17 @@ function looksLikeEmailBodyText(text) {
   const hasGreeting = /^(hei|hello|hi|dear|kjære)\b/i.test(firstLine) || /(^|\n)\s*(hei|hello|hi|dear|kjære)\b/i.test(firstTwo);
   const hasSignoff = /\b(med vennlig hilsen|vennlig hilsen|hilsen|mvh|best regards|kind regards|regards|sincerely)\b/i.test(normalized);
   const hasHeaderLine = lines.slice(0, 8).some((line) => /^(fra|from|til|to|emne|subject|cc|bcc)\s*:/i.test(line));
+  const hasSenderDisplayLine = lines.slice(0, 6).some((line) => /^"?[^"<]{2,120}?"?\s*<[^>]+>$/.test(line));
+  const hasRecipientDirectionLine = lines.slice(0, 6).some((line) => /^(til|to)\s+\S+/i.test(line));
+  const hasDateStampLine = lines.slice(0, 6).some((line) =>
+    /\b\d{1,2}[.:]\d{2}\b/.test(line) && /\b\d{4}\b/.test(line)
+  );
   const hasEmailAddress = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(raw);
   const hasThreadSubject = /^(re|sv|fw|fwd)\s*:/i.test(firstLine);
   const paragraphCount = raw.split(/\n{2,}/).map((chunk) => chunk.trim()).filter(Boolean).length;
 
   if (hasSignoff) return true;
+  if (hasSenderDisplayLine && (hasRecipientDirectionLine || hasDateStampLine || lines.length >= 3)) return true;
   if (hasHeaderLine && (hasEmailAddress || lines.length >= 3)) return true;
   if (hasGreeting && (paragraphCount >= 2 || hasEmailAddress || lines.length >= 3)) return true;
   if (hasThreadSubject && (hasEmailAddress || hasGreeting || hasSignoff)) return true;
@@ -3106,6 +3112,11 @@ function normalizeDraftReplyInstruction(instruction) {
     return `Write a complete polite reply that clearly communicates this point: ${trimmed}`;
   }
 
+  const editingDirective = /\b(gjør\s+kortere|kortere|forkort|shorten|shorter|condense|compress|stram\s+opp|oppsummer(?:ing)?|oppsumer(?:ing)?|summarize|summarise|summary|tl;dr|tldr|formell|formal|casual|uformell|høflig|professional|profesjonell|oversett|translate|grammatikk|grammar|tegnsetting|punctuation|rewrite|omskriv)\b/i.test(trimmed);
+  if (!editingDirective) {
+    return `Write a complete polite reply email that clearly communicates this point: ${trimmed}`;
+  }
+
   return trimmed;
 }
 
@@ -3594,6 +3605,22 @@ async function handleRewrite(body, requestSignal) {
     const replyContextProfile = draftReplyFromContext
       ? classifyDraftReplyContext(correctedInput)
       : null;
+    const draftReplyLikelyEmail = draftReplyFromContext && (
+      looksLikeEmailBodyText(correctedInput) ||
+      !!emailRecipientHint ||
+      /(^|\n)\s*(fra|from|til|to|emne|subject)\s*:/i.test(correctedInput) ||
+      /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(correctedInput)
+    );
+    if (draftReplyLikelyEmail && effectiveRewriteMode !== "email_subject") {
+      effectiveRewriteMode = "email_body";
+    }
+    if (
+      draftReplyFromContext &&
+      effectiveRewriteMode === "generic" &&
+      (replyContextProfile?.kind === "email" || replyContextProfile?.kind === "support" || replyContextProfile?.kind === "invitation")
+    ) {
+      effectiveRewriteMode = "email_body";
+    }
 
     const langRule = explicitTargetLanguage
       ? `The instruction explicitly requests a language change. Output language must be ${explicitTargetLanguage}. Translate only because the instruction asks for it.`
