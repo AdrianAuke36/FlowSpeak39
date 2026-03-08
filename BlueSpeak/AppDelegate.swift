@@ -42,7 +42,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var microphoneMenuItems: [String: NSMenuItem] = [:]
     private var languageMenuItems: [AppLanguage: NSMenuItem] = [:]
     private var translationMenuItems: [AppLanguage: NSMenuItem] = [:]
-    private var styleMenuItems: [WritingStyle: NSMenuItem] = [:]
     private var interpretationMenuItems: [InterpretationLevel: NSMenuItem] = [:]
     private var normalStatusImage: NSImage { makeMenuBarImage(state: .normal) }
     private var warningStatusImage: NSImage { makeMenuBarImage(state: .warning) }
@@ -89,7 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshAIMenuTitle()
         applyLanguage(settings.appLanguage, persist: false)
         applyTranslationTarget(settings.translationTargetLanguage, persist: false)
-        applyStyle(settings.writingStyle, persist: false)
         applyInterpretationLevel(settings.interpretationLevel, persist: false)
         applyBackendConfiguration(
             baseURL: settings.backendBaseURL,
@@ -99,7 +97,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshMicrophoneMenuState()
         refreshLanguageMenuState()
         refreshTranslationMenuState()
-        refreshStyleMenuState()
         observeSettingsChanges()
 
         Task { [weak self] in
@@ -154,13 +151,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .removeDuplicates()
             .sink { [weak self] language in
                 self?.applyLanguage(language, persist: false)
-            }
-            .store(in: &cancellables)
-
-        settings.$writingStyle
-            .removeDuplicates()
-            .sink { [weak self] style in
-                self?.applyStyle(style, persist: false)
             }
             .store(in: &cancellables)
 
@@ -398,6 +388,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let flags = event.flags
+        if shouldSuppressTriggerShortcutsDuringCapture(event: event, flags: flags) {
+            return nil
+        }
         if flags.contains(.maskShift) || flags.contains(.maskControl) {
             return Unmanaged.passUnretained(event)
         }
@@ -412,6 +405,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.triggerQuickReplyContextCapture()
         }
         return nil
+    }
+
+    private func shouldSuppressTriggerShortcutsDuringCapture(event _: CGEvent, flags: CGEventFlags) -> Bool {
+        let triggerIsDown: Bool
+        switch settings.shortcutTriggerKey {
+        case .function:
+            triggerIsDown = flags.contains(.maskSecondaryFn) || functionModifierIsDown
+        case .leftOption, .rightOption:
+            triggerIsDown = flags.contains(.maskAlternate) || leftOptionModifierIsDown || rightOptionModifierIsDown
+        case .leftCommand, .rightCommand:
+            triggerIsDown = flags.contains(.maskCommand) || leftCommandModifierIsDown || rightCommandModifierIsDown
+        }
+
+        // Only suppress while the app is actively capturing so normal typing
+        // still works when dictation/rewrite is idle.
+        let captureActive =
+            dictation.isCaptureActive ||
+            isSelectionRewriteInProgress ||
+            isCapturingRewriteInstruction
+        guard captureActive else { return false }
+        guard triggerIsDown else { return false }
+        return true
     }
 
     private func isSelectedTriggerDownForQuickReplyEvent(flags: CGEventFlags) -> Bool {
@@ -1046,7 +1061,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             menu.addItem(makeMicrophoneRootMenuItem())
             menu.addItem(makeLanguagesRootMenuItem())
-            menu.addItem(makeStyleRootMenuItem())
             menu.addItem(makeInterpretationRootMenuItem())
         } else {
             menu.addItem(makeSectionHeader(title: "Quick"))
@@ -1071,7 +1085,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshMicrophoneMenuState()
         refreshLanguageMenuState()
         refreshTranslationMenuState()
-        refreshStyleMenuState()
         refreshInterpretationMenuState()
     }
 
@@ -1103,7 +1116,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         advancedMenu.addItem(aiItem)
         aiMenuItem = aiItem
 
-        advancedMenu.addItem(makeStyleRootMenuItem())
         advancedMenu.addItem(makeInterpretationRootMenuItem())
         rootItem.submenu = advancedMenu
         return rootItem
@@ -1147,22 +1159,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         rootItem.submenu = languageMenu
-        return rootItem
-    }
-
-    private func makeStyleRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Style", action: nil, keyEquivalent: "")
-        let styleMenu = NSMenu(title: "Style")
-        styleMenuItems.removeAll()
-
-        for style in WritingStyle.allCases {
-            let item = makeMenuItem(title: style.menuLabel, action: #selector(selectStyle(_:)))
-            item.representedObject = style.rawValue
-            styleMenu.addItem(item)
-            styleMenuItems[style] = item
-        }
-
-        rootItem.submenu = styleMenu
         return rootItem
     }
 
@@ -1315,12 +1311,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func refreshStyleMenuState() {
-        for (style, item) in styleMenuItems {
-            item.state = settings.writingStyle == style ? .on : .off
-        }
-    }
-
     private func refreshInterpretationMenuState() {
         for (interpretationLevel, item) in interpretationMenuItems {
             item.state = settings.interpretationLevel == interpretationLevel ? .on : .off
@@ -1341,14 +1331,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         refreshTranslationMenuState()
         updateBackendMenuItem(online: backendOnline)
-    }
-
-    private func applyStyle(_ style: WritingStyle, persist: Bool) {
-        if persist {
-            settings.writingStyle = style
-        }
-        dictation.setStyle(style)
-        refreshStyleMenuState()
     }
 
     private func applyInterpretationLevel(_ interpretationLevel: InterpretationLevel, persist: Bool) {
@@ -1401,13 +1383,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               let language = AppLanguage(rawValue: raw)
         else { return }
         applyLanguage(language, persist: true)
-    }
-
-    @objc private func selectStyle(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let style = WritingStyle(rawValue: raw)
-        else { return }
-        applyStyle(style, persist: true)
     }
 
     @objc private func selectInterpretationLevel(_ sender: NSMenuItem) {

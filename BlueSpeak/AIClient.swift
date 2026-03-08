@@ -53,7 +53,6 @@ final class AIClient {
     var backendToken: String = ""
     // Default to Norwegian to prevent random language drift from model outputs.
     var targetLanguage: String = "nb-NO"
-    var style: WritingStyle = .clean
     var interpretationLevel: InterpretationLevel = .balanced
 
     private let session: URLSession
@@ -188,7 +187,7 @@ final class AIClient {
             "text": cleanText,
             "instruction": cleanInstruction,
             "targetLanguage": effectiveTargetLanguage,
-            "style": style.rawValue,
+            "style": "clean",
             "emailReplyGreetingMode": AppSettings.shared.emailReplyGreetingMode.rawValue,
             "emailReplySignoffMode": AppSettings.shared.emailReplySignoffMode.rawValue,
             "emailReplySignoffText": AppSettings.shared.resolvedEmailReplySignoffText
@@ -248,7 +247,7 @@ final class AIClient {
             "text": text,
             "targetLanguage": targetLanguage,
             "targetLanguageForced": targetLanguageForced,
-            "style": style.rawValue,
+            "style": "clean",
             "interpretationLevel": interpretationLevel.rawValue,
             "mode": mode.rawValue,
             "bundleId": ctx?.bundleId ?? "",

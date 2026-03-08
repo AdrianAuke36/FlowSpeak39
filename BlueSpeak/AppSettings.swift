@@ -85,24 +85,6 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 }
 
-enum WritingStyle: String, CaseIterable, Identifiable {
-    case clean
-    case formal
-    case casual
-    case excited
-
-    var id: String { rawValue }
-
-    var menuLabel: String {
-        switch self {
-        case .clean: return "Clean"
-        case .formal: return "Formal"
-        case .casual: return "Casual"
-        case .excited: return "Excited"
-        }
-    }
-}
-
 enum InterpretationLevel: String, CaseIterable, Identifiable {
     case literal
     case balanced
@@ -340,7 +322,6 @@ final class AppSettings: ObservableObject {
         static let appLanguage = "appLanguage"
         static let translationTargetLanguage = "translationTargetLanguage"
         static let globalMode = "globalMode"
-        static let writingStyle = "writingStyle"
         static let interpretationLevel = "interpretationLevel"
         static let shortcutTriggerKey = "shortcutTriggerKey"
         static let statusMenuAdvancedModeEnabled = "statusMenuAdvancedModeEnabled"
@@ -400,10 +381,6 @@ final class AppSettings: ObservableObject {
 
     @Published var globalMode: InsertionMode {
         didSet { UserDefaults.standard.set(globalMode.rawValue, forKey: StorageKey.globalMode) }
-    }
-
-    @Published var writingStyle: WritingStyle {
-        didSet { UserDefaults.standard.set(writingStyle.rawValue, forKey: StorageKey.writingStyle) }
     }
 
     @Published var interpretationLevel: InterpretationLevel {
@@ -590,9 +567,7 @@ final class AppSettings: ObservableObject {
 
         let rawGlobal = UserDefaults.standard.string(forKey: StorageKey.globalMode) ?? InsertionMode.pasteOnly.rawValue
         self.globalMode = InsertionMode(rawValue: rawGlobal) ?? .pasteOnly
-
-        let rawStyle = UserDefaults.standard.string(forKey: StorageKey.writingStyle) ?? WritingStyle.clean.rawValue
-        self.writingStyle = WritingStyle(rawValue: rawStyle) ?? .clean
+        UserDefaults.standard.removeObject(forKey: "writingStyle")
 
         let rawInterpretationLevel = UserDefaults.standard.string(forKey: StorageKey.interpretationLevel) ?? InterpretationLevel.balanced.rawValue
         self.interpretationLevel = InterpretationLevel(rawValue: rawInterpretationLevel) ?? .balanced

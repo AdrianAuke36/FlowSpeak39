@@ -100,11 +100,6 @@ final class DictationController: NSObject {
         print("🌍 one-shot output target:", normalized)
     }
 
-    func setStyle(_ style: WritingStyle) {
-        ai.style = style
-        print("✍️ style:", style.menuLabel)
-    }
-
     func setInterpretationLevel(_ interpretationLevel: InterpretationLevel) {
         self.interpretationLevel = interpretationLevel
         ai.interpretationLevel = interpretationLevel
@@ -697,10 +692,15 @@ final class DictationController: NSObject {
         }
 
         let items = finalItems
-            .filter { !$0.isEmpty && isLikelySimpleListItemLocal($0) }
+            .filter { !$0.isEmpty && isLikelySimpleListItemLocal($0) && !isListContextOnlyItemLocal($0) }
         if items.count < 2 { return source }
 
-        let heading = inferLocalListHeading(from: source)
+        let listBody = items.map { "- \($0)" }.joined(separator: "\n")
+        let heading = applyListTimingQualifierLocal(
+            inferLocalListHeading(from: source, output: listBody),
+            source: source,
+            output: listBody
+        )
         let body = items.map { "- \($0)" }.joined(separator: "\n")
         if let heading, !heading.isEmpty {
             return "\(heading)\n\(body)"
@@ -708,8 +708,10 @@ final class DictationController: NSObject {
         return body
     }
 
-    private func inferLocalListHeading(from source: String) -> String? {
+    private func inferLocalListHeading(from source: String, output: String) -> String? {
         let lower = source.lowercased()
+        let outputLower = output.lowercased()
+        let englishSignal = outputLower.range(of: #"\b(?:for|tomorrow|shopping|ingredients|we need|milk|eggs|bread)\b"#, options: .regularExpression) != nil
 
         if lower.range(of: #"\bfor\s+dinner\b"#, options: .regularExpression) != nil {
             return "What we need for dinner:"
@@ -721,9 +723,36 @@ final class DictationController: NSObject {
             return "Shopping list"
         }
         if lower.range(of: #"\b(?:hand(?:le)?list(?:e|en|a)|innkjøpsliste)\b"#, options: .regularExpression) != nil {
-            return "Handleliste"
+            return englishSignal ? "Shopping list" : "Handleliste"
         }
         return nil
+    }
+
+    private func applyListTimingQualifierLocal(_ heading: String?, source: String, output: String) -> String? {
+        guard var heading, !heading.isEmpty else { return heading }
+        let combined = "\(source)\n\(output)".lowercased()
+
+        let hasTomorrow = combined.range(of: #"\b(?:for\s+tomorrow|tomorrow|i\s+morgen|til\s+i\s+morgen)\b"#, options: .regularExpression) != nil
+        let hasToday = combined.range(of: #"\b(?:for\s+today|today|i\s+dag|til\s+i\s+dag)\b"#, options: .regularExpression) != nil
+        let hasTonight = combined.range(of: #"\b(?:for\s+tonight|tonight|i\s+kveld|til\s+i\s+kveld)\b"#, options: .regularExpression) != nil
+        if !hasTomorrow && !hasToday && !hasTonight { return heading }
+
+        let englishHeading = heading.lowercased().contains("shopping") || heading.lowercased().contains("what we need")
+        let qualifier: String
+        if hasTomorrow {
+            qualifier = englishHeading ? "for tomorrow" : "til i morgen"
+        } else if hasToday {
+            qualifier = englishHeading ? "for today" : "for i dag"
+        } else {
+            qualifier = englishHeading ? "for tonight" : "for i kveld"
+        }
+
+        if heading.lowercased().contains(qualifier.lowercased()) { return heading }
+        if heading.hasSuffix(":") {
+            heading.removeLast()
+            return "\(heading) \(qualifier):"
+        }
+        return "\(heading) \(qualifier):"
     }
 
     private func stripListLeadPhrasesLocal(_ text: String) -> String {
@@ -888,6 +917,15 @@ final class DictationController: NSObject {
             return false
         }
         return true
+    }
+
+    private func isListContextOnlyItemLocal(_ text: String) -> Bool {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if value.isEmpty { return false }
+        return value.range(
+            of: #"^(?:for\s+(?:today|tomorrow|tonight)|today|tomorrow|tonight|i\s+dag|i\s+morgen|i\s+kveld|til\s+i\s+dag|til\s+i\s+morgen|til\s+i\s+kveld|for\s+i\s+dag|for\s+i\s+morgen|for\s+i\s+kveld)$"#,
+            options: .regularExpression
+        ) != nil
     }
 
     private func normalizeEmailBody(_ text: String) -> String {

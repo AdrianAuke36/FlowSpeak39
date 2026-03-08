@@ -18,7 +18,6 @@ struct HomeView: View {
     enum Page: CaseIterable, Identifiable {
         case home
         case history
-        case style
         case settings
 
         var id: Self { self }
@@ -27,7 +26,6 @@ struct HomeView: View {
             switch self {
             case .home: return "Home"
             case .history: return "History"
-            case .style: return "Style"
             case .settings: return "Settings"
             }
         }
@@ -36,7 +34,6 @@ struct HomeView: View {
             switch self {
             case .home: return "house.fill"
             case .history: return "clock.arrow.circlepath"
-            case .style: return "textformat"
             case .settings: return "gearshape.fill"
             }
         }
@@ -151,8 +148,6 @@ struct HomeView: View {
             MainPage()
         case .history:
             HistoryPage()
-        case .style:
-            StylePage()
         case .settings:
             SettingsView(initialSection: settingsInitialSection)
                 .id(settingsViewIdentity)
@@ -1877,168 +1872,6 @@ struct SidebarItem: View {
     }
 }
 
-// MARK: - Style Page
-
-enum StyleScope: String, CaseIterable, Identifiable {
-    case personal
-    case work
-    case email
-    case other
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .personal: return "Personal messages"
-        case .work: return "Work messages"
-        case .email: return "Email"
-        case .other: return "Other"
-        }
-    }
-
-    var iconNames: [String] {
-        switch self {
-        case .personal: return ["message.fill", "paperplane.fill", "bubble.left.and.bubble.right.fill"]
-        case .work: return ["briefcase.fill", "person.2.fill", "building.2.fill"]
-        case .email: return ["envelope.fill", "tray.fill", "mail.stack.fill"]
-        case .other: return ["doc.text.fill", "note.text", "square.grid.2x2.fill"]
-        }
-    }
-
-    var bannerTitle: String {
-        switch self {
-        case .personal: return "This style applies in personal messaging apps"
-        case .work: return "This style applies in workplace messaging apps"
-        case .email: return "This style applies in major email apps"
-        case .other: return "This style applies in other writing apps"
-        }
-    }
-
-    var sampleText: String {
-        switch self {
-        case .personal:
-            return "Hey, are you free for lunch tomorrow? Let's do 12 if that works for you."
-        case .work:
-            return "Hi team, are you available for a quick status sync at 12? Please share blockers."
-        case .email:
-            return "Hi Alex,\n\nIt was great talking with you today. Looking forward to our next chat.\n\nBest,\nMary"
-        case .other:
-            return "So far, I am enjoying the new workout routine. I am excited for tomorrow's session."
-        }
-    }
-}
-
-struct StylePage: View {
-    @ObservedObject private var settings = AppSettings.shared
-    @State private var selectedScope: StyleScope = .personal
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Style")
-                .font(.system(size: 34, weight: .bold, design: .serif))
-                .foregroundStyle(AppTheme.primaryText)
-                .padding(.horizontal, 28)
-                .padding(.top, 28)
-                .padding(.bottom, 18)
-
-            Picker("Style scope", selection: $selectedScope) {
-                ForEach(StyleScope.allCases) { scope in
-                    Text(scope.title).tag(scope)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 28)
-            .padding(.bottom, 12)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(WritingStyle.allCases) { style in
-                        StyleOptionCard(
-                            style: style,
-                            sampleText: previewText(for: style),
-                            isSelected: settings.writingStyle == style
-                        ) {
-                            settings.writingStyle = style
-                        }
-                    }
-                }
-                .padding(.horizontal, 28)
-                .padding(.bottom, 8)
-            }
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(AppTheme.canvas)
-    }
-
-    private func previewText(for style: WritingStyle) -> String {
-        style.previewText(from: selectedScope.sampleText)
-    }
-}
-
-struct StyleOptionCard: View {
-    let style: WritingStyle
-    let sampleText: String
-    let isSelected: Bool
-    let onSelect: () -> Void
-
-    var body: some View {
-        Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(title)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(AppTheme.primaryText)
-                Text(subtitle)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(AppTheme.secondaryText)
-
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(AppTheme.surfaceMuted)
-                    .overlay(
-                        Text(sampleText)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(AppTheme.secondaryText)
-                            .multilineTextAlignment(.leading)
-                            .lineSpacing(2)
-                            .lineLimit(6)
-                            .padding(12),
-                        alignment: .topLeading
-                    )
-                    .frame(height: 148)
-            }
-            .padding(14)
-            .frame(width: 228, alignment: .topLeading)
-            .frame(height: 248)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(AppTheme.cardMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(AppTheme.surface.opacity(0.2))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(
-                                isSelected ? AppTheme.accent : AppTheme.border,
-                                lineWidth: isSelected ? 2 : 1
-                            )
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var title: String {
-        style.cardTitle
-    }
-
-    private var subtitle: String {
-        style.cardSubtitle
-    }
-}
-
 // MARK: - Main Page
 
 struct MainPage: View {
@@ -2279,46 +2112,6 @@ struct ModeBadge: View {
     }
 }
 
-private extension WritingStyle {
-    var cardTitle: String {
-        switch self {
-        case .clean: return "Clean"
-        case .formal: return "Formal."
-        case .casual: return "Casual"
-        case .excited: return "Excited!"
-        }
-    }
-
-    var cardSubtitle: String {
-        switch self {
-        case .clean: return "Grammar + self-correct + no fillers"
-        case .formal: return "Caps + Punctuation"
-        case .casual: return "Caps + Less punctuation"
-        case .excited: return "More exclamations"
-        }
-    }
-
-    func previewText(from source: String) -> String {
-        switch self {
-        case .clean:
-            return source
-                .replacingOccurrences(of: "  ", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        case .formal:
-            return source
-        case .casual:
-            return source
-                .replacingOccurrences(of: "I am", with: "I'm")
-                .replacingOccurrences(of: "Please", with: "pls")
-                .replacingOccurrences(of: "Best,", with: "Best")
-                .replacingOccurrences(of: ".", with: "")
-        case .excited:
-            return source
-                .replacingOccurrences(of: ".", with: "!")
-                .replacingOccurrences(of: "Best,", with: "Best!")
-        }
-    }
-}
 
 private struct CardSurfaceModifier: ViewModifier {
     func body(content: Content) -> some View {

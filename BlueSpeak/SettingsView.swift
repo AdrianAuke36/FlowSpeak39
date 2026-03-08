@@ -32,7 +32,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .general:
-            return "Language, style, microphone and core dictation behavior."
+            return "Language, microphone and core dictation behavior."
         case .account:
             return "Session status and sign-in account actions."
         case .privacy:
@@ -216,10 +216,6 @@ struct SettingsView: View {
 
                 settingRow(title: "Translate") {
                     languagePicker(selection: $settings.translationTargetLanguage, width: 240)
-                }
-
-                settingRow(title: "Stil") {
-                    stylePicker(selection: $settings.writingStyle, width: 240)
                 }
 
                 settingRow(title: "Forståelse") {
@@ -771,15 +767,6 @@ struct SettingsView: View {
         Picker("", selection: selection) {
             ForEach(AppLanguage.allCases) { language in
                 Text(language.pickerMenuLabel).tag(language)
-            }
-        }
-        .storePicker(maxWidth: width)
-    }
-
-    private func stylePicker(selection: Binding<WritingStyle>, width: CGFloat) -> some View {
-        Picker("", selection: selection) {
-            ForEach(WritingStyle.allCases) { style in
-                Text(style.menuLabel).tag(style)
             }
         }
         .storePicker(maxWidth: width)
