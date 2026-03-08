@@ -1466,7 +1466,9 @@ function normalizeListItemToken(value) {
     .replace(/^(?:og|and)\s+/i, "")
     .replace(/^(?:(?:jeg|vi)\s+skal\s+ha\s+(?:en|ei|et)?\s+)?(?:shopping\s*list|shoppinglist|grocery\s*list|hand(?:le)?list(?:e|en|a)|innkjøpsliste)\s*(?:[:\-]|\s+med)?\s*/i, "")
     .replace(/^(?:on\s+my\s+shopping\s+list|på\s+hand(?:le)?list(?:e|en|a))\s*[:,]?\s*/i, "")
-    .replace(/^(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\s+/i, "")
+    .replace(/^(?:det\s+vi\s+trenger\s+til\s+middag|what\s+we\s+need\s+for\s+dinner)\s*[:\-]?\s*/i, "")
+    .replace(/^(?:for\s+(?:tomorrow|today|tonight)|today|tomorrow|tonight|i\s+morgen|i\s+dag|i\s+kveld|til\s+i\s+morgen|til\s+i\s+dag|til\s+i\s+kveld|for\s+i\s+morgen|for\s+i\s+dag|for\s+i\s+kveld)\s*[:\-]?\s*/i, "")
+    .replace(/^(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|jeg\s+trenger)\s+/i, "")
     .replace(/^(?:til\s+[a-zæøå][a-zæøå\-']{1,24})\s+(?:trenger|må\s+ha|need|we\s+need)\s+/i, "")
     .replace(/^(?:(?:jeg|vi)\s+)?(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|need|we\s+need|buy|get)\s+/i, "")
     .replace(/^med\s+/i, "")
@@ -2052,6 +2054,13 @@ function splitBulletItems(content) {
     .replace(/\s*\n+\s*/g, "\n")
     .trim();
 
+  const headingPrefixMatch = working.match(
+    /^(?:handleliste|innkjøpsliste|shopping\s*list|shoppinglist|grocery\s*list|det\s+vi\s+trenger\s+til\s+middag|what\s+we\s+need\s+for\s+dinner)\s*[:\-]\s*(.+)$/i
+  );
+  if (headingPrefixMatch?.[1]) {
+    working = String(headingPrefixMatch[1]).trim();
+  }
+
   let parts = [];
   if (working.includes("\n")) {
     parts = working.split(/\n+/);
@@ -2095,12 +2104,16 @@ function stripListLeadPhrases(text) {
     ""
   );
   out = out.replace(
+    /^\s*(?:det\s+vi\s+trenger\s+til\s+middag|what\s+we\s+need\s+for\s+dinner)\s*[:\-]?\s*/i,
+    ""
+  );
+  out = out.replace(
     /^\s*(?:(?:jeg|vi)\s+skal\s+ha\s+(?:en|ei|et)?\s+)?(?:til\s+[^\s,.;:!?]+(?:\s+[^\s,.;:!?]+){0,2}\s+)?(?:trenger\s+vi|vi\s+trenger|we\s+need|need|kjøp|buy|get|hand(?:le)?liste(?:n)?|ingredienser(?:\s+til\s+[^\s,.;:!?]+)?)\s*(?:med\s+)?/i,
     ""
   );
   out = out.replace(/^\s*med\s+/i, "");
-  out = out.replace(/\b(?:vi\s+trenger|trenger\s+vi|we\s+need|need)\b/ig, ", ");
-  out = out.replace(/\b(?:i\s+want|jeg\s+vil\s+ha|jeg\s+trenger)\b/ig, ", ");
+  out = out.replace(/^\s*(?:vi\s+trenger|trenger\s+vi|we\s+need|need)\s+/i, "");
+  out = out.replace(/^\s*(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|jeg\s+trenger)\s+/i, "");
   return out.trim();
 }
 
@@ -2151,29 +2164,8 @@ function resolveListHeadingLanguage(heading, outputText, preferredLanguage = "")
 function applyListTimingQualifier(heading, sourceText, outputText, preferredLanguage = "") {
   const base = String(heading || "").trim();
   if (!base) return base;
-
-  const source = `${String(sourceText || "")}\n${String(outputText || "")}`.toLowerCase();
-  const preferred = String(preferredLanguage || "").trim().toLowerCase();
-  const wantsEnglish = preferred.startsWith("en");
-  const wantsNorwegian = preferred.startsWith("nb") || preferred.startsWith("nn") || preferred.startsWith("no");
-  const englishSignal = /\b(?:for|tomorrow|today|tonight)\b/i.test(source);
-
-  const hasTomorrow = /\b(?:for\s+tomorrow|tomorrow|i\s+morgen|til\s+i\s+morgen)\b/i.test(source);
-  const hasToday = /\b(?:for\s+today|today|i\s+dag|til\s+i\s+dag)\b/i.test(source);
-  const hasTonight = /\b(?:for\s+tonight|tonight|i\s+kveld|til\s+i\s+kveld)\b/i.test(source);
-
-  let qualifier = "";
-  if (hasTomorrow) qualifier = (wantsNorwegian && !wantsEnglish) ? "til i morgen" : "for tomorrow";
-  else if (hasToday) qualifier = (wantsNorwegian && !wantsEnglish) ? "for i dag" : "for today";
-  else if (hasTonight) qualifier = (wantsNorwegian && !wantsEnglish) ? "for i kveld" : "for tonight";
-  else if (!wantsNorwegian && englishSignal) qualifier = "";
-
-  if (!qualifier) return base;
-  if (new RegExp(`\\b${escapeRegExp(qualifier)}\\b`, "i").test(base)) return base;
-  if (/:$/.test(base)) {
-    return `${base.replace(/:\s*$/, "")} ${qualifier}:`;
-  }
-  return `${base} ${qualifier}:`;
+  // Keep headings short and stable; timing phrases often belong in the body context.
+  return base;
 }
 
 function stripLeadingListTimingQualifier(text) {
@@ -2467,7 +2459,15 @@ function tidyBulletListOutput(text) {
       const match = line.match(/^(\s*[-•*]\s+)(.+)$/);
       if (!match) return line;
       const prefix = match[1];
-      const item = String(match[2] || "").replace(/[.,;:]+$/g, "").trim();
+      let item = String(match[2] || "").replace(/[.,;:]+$/g, "").trim();
+      item = item
+        .replace(/^(?:handleliste|shopping\s*list|shoppinglist|grocery\s*list|innkjøpsliste)\s*:\s*/i, "")
+        .replace(/^(?:det\s+vi\s+trenger\s+til\s+middag|what\s+we\s+need\s+for\s+dinner)\s*:\s*/i, "")
+        .replace(/^(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|we\s+need|vi\s+trenger)\s+/i, "")
+        .trim();
+      if (/^(?:handleliste|shopping\s*list|shoppinglist|grocery\s*list|innkjøpsliste|det\s+vi\s+trenger\s+til\s+middag|what\s+we\s+need\s+for\s+dinner)\s*:?$/i.test(item)) {
+        return "";
+      }
       return item ? `${prefix}${item}` : "";
     })
     .filter(Boolean)
@@ -3202,6 +3202,127 @@ function instructionRequestsEmailForm(instruction) {
   return hasEmailWord && hasComposeWord;
 }
 
+function instructionRequestsSummary(instruction) {
+  const normalized = String(instruction || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  return /\b(oppsummer(?:ing)?|oppsumer(?:ing)?|summarize|summarise|summary|sum up|tl;dr|tldr)\b/.test(normalized);
+}
+
+function instructionRequestsBulletSummary(instruction) {
+  const normalized = String(instruction || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  return /\b(punkt|punkter|bullet|bullets|bullet points|liste|list)\b/.test(normalized);
+}
+
+function instructionRequestsShorten(instruction) {
+  const normalized = String(instruction || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  return /\b(gjør\s+kortere|kortere|forkort|shorten|shorter|condense|compress|stram\s+opp)\b/.test(normalized);
+}
+
+function splitIntoSummaryUnits(text) {
+  const source = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!source) return [];
+
+  const bulletLines = source
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => /^\s*[-•*]\s+/.test(line))
+    .map((line) => line.replace(/^\s*[-•*]\s+/, "").trim())
+    .filter(Boolean);
+  if (bulletLines.length) return bulletLines;
+
+  return source
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function localSummarizeText(text, { bullets = false } = {}) {
+  const units = splitIntoSummaryUnits(text);
+  if (!units.length) return String(text || "").trim();
+
+  const unique = [];
+  const seen = new Set();
+  for (const unit of units) {
+    const key = unit.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(unit);
+  }
+
+  const picked = unique.slice(0, 4);
+  if (!picked.length) return String(text || "").trim();
+
+  if (bullets) {
+    return picked.map((item) => `- ${item}`).join("\n");
+  }
+
+  return picked.slice(0, 2).join(" ");
+}
+
+function localShortenText(text) {
+  const source = String(text || "").trim();
+  if (!source) return source;
+
+  const words = source.split(/\s+/).filter(Boolean);
+  if (words.length <= 14) return source;
+
+  const targetWordCount = Math.max(14, Math.min(80, Math.round(words.length * 0.6)));
+  const units = splitIntoSummaryUnits(source);
+  let kept = [];
+  let usedWords = 0;
+
+  for (const unit of units) {
+    const unitWords = unit.split(/\s+/).filter(Boolean);
+    if (!unitWords.length) continue;
+    if (usedWords + unitWords.length > targetWordCount && kept.length) break;
+    kept.push(unit);
+    usedWords += unitWords.length;
+    if (usedWords >= targetWordCount) break;
+  }
+
+  if (!kept.length) {
+    kept = [words.slice(0, targetWordCount).join(" ")];
+  }
+
+  let out = kept.join(" ").trim();
+  if (out.length < source.length) {
+    out = out.replace(/[.,;:!?]*$/, "").trim();
+    if (out && !/[.!?…]$/.test(out)) out = `${out}…`;
+  }
+  return out;
+}
+
+function buildLocalRewriteFallbackText({
+  instruction,
+  sourceText,
+  rewriteMode,
+  preferredLanguage
+}) {
+  const rewriteRawFormattingSource = `${instruction}\n${sourceText}`;
+  const rewriteFormattedSource = applySpokenFormattingPostprocess(rewriteRawFormattingSource);
+  let out = String(sourceText || "").trim();
+  if (!out) return out;
+
+  if (instructionRequestsSummary(instruction)) {
+    out = localSummarizeText(out, { bullets: instructionRequestsBulletSummary(instruction) });
+  } else if (instructionRequestsShorten(instruction)) {
+    out = localShortenText(out);
+  }
+
+  out = normalizePunctuationArtifacts(applySpokenFormattingPostprocess(out));
+  if (rewriteMode === "email_body") {
+    out = normalizeEmailBody(out);
+  }
+  out = preserveRequestedBulletLayout(rewriteRawFormattingSource, out);
+  out = preserveRequestedListHeading(rewriteRawFormattingSource, out, preferredLanguage);
+  out = preserveRequestedParentheses(rewriteFormattedSource, out);
+  out = preserveRequestedEmojis(rewriteFormattedSource, out);
+  out = tidyBulletListOutput(out);
+  return out.trim();
+}
+
 function escapeRegExp(value) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -3449,6 +3570,8 @@ async function handleRewrite(body, requestSignal) {
   let emailReplySignoffMode = "autoName";
   let emailReplySignoffText = "";
   let emailRecipientHint = "";
+  let explicitTargetLanguage = null;
+  let usedFallback = false;
 
   try {
     if (requestSignal?.aborted) {
@@ -3490,7 +3613,7 @@ async function handleRewrite(body, requestSignal) {
     if (draftReplyFromContext) {
       instruction = normalizeDraftReplyInstruction(instruction);
     }
-    const explicitTargetLanguage = inferExplicitTargetLanguageFromInstruction(instruction);
+    explicitTargetLanguage = inferExplicitTargetLanguageFromInstruction(instruction);
     allowsLanguageChange = explicitTargetLanguage !== null || instructionRequestsLanguageChange(instruction);
     effectiveOutputLanguage = explicitTargetLanguage || lang;
     const replyContextProfile = draftReplyFromContext
@@ -3593,6 +3716,7 @@ async function handleRewrite(body, requestSignal) {
       sanitizeMode,
       explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang)
     );
+    const preferredLanguageForOutput = explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang);
     finalText = normalizePunctuationArtifacts(
       applySpokenFormattingPostprocess(
         applyDictionaryReplacements(finalText, dictionary)
@@ -3604,19 +3728,27 @@ async function handleRewrite(body, requestSignal) {
     finalText = preserveRequestedListHeading(
       rewriteRawFormattingSource,
       finalText,
-      explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang)
+      preferredLanguageForOutput
     );
     finalText = preserveRequestedParentheses(rewriteFormattedSource, finalText);
     finalText = preserveRequestedEmojis(rewriteFormattedSource, finalText).trim();
     finalText = tidyBulletListOutput(finalText);
+    const languageMismatchDetected = (
+      (!allowsLanguageChange && isLikelyWrongForTarget(finalText, lang))
+      || (explicitTargetLanguage && isLikelyWrongForTarget(finalText, effectiveOutputLanguage))
+    );
+    if (languageMismatchDetected) {
+      usedFallback = true;
+      console.warn("⚠️ rewrite language mismatch; using local fallback.");
+      finalText = buildLocalRewriteFallbackText({
+        instruction,
+        sourceText: correctedInput,
+        rewriteMode: effectiveRewriteMode,
+        preferredLanguage: preferredLanguageForOutput
+      });
+    }
     if (!finalText) {
       return { status: 502, json: { error: "Model returned empty text." } };
-    }
-    if (!allowsLanguageChange && isLikelyWrongForTarget(finalText, lang)) {
-      return { status: 502, json: { error: "Model output language mismatch." } };
-    }
-    if (explicitTargetLanguage && isLikelyWrongForTarget(finalText, effectiveOutputLanguage)) {
-      return { status: 502, json: { error: "Model output language mismatch." } };
     }
 
     timings.postprocessMs = Date.now() - postprocessStartedAt;
@@ -3632,6 +3764,7 @@ async function handleRewrite(body, requestSignal) {
         appliedMode: effectiveRewriteMode,
         appliedStyle: style,
         instruction,
+        fallback: usedFallback,
         timings: {
           preprocessMs: timings.preprocessMs,
           modelMs: timings.modelMs,
@@ -3650,28 +3783,17 @@ async function handleRewrite(body, requestSignal) {
       const retryCount = Math.max(0, (Array.isArray(err?.attempts) ? err.attempts.length : timings.modelAttempts.length) - 1);
       timings.totalMs = Date.now() - requestStartedAt;
       console.warn("⚠️ rewrite fallback:", err?.message || "unknown", "| retries:", retryCount);
+      const preferredLanguageForOutput = explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang);
       return {
         status: 200,
         json: {
           language: effectiveOutputLanguage,
-          text: (() => {
-            const rewriteRawFormattingSource = `${instruction}\n${correctedInput}`;
-            const rewriteFormattedSource = applySpokenFormattingPostprocess(rewriteRawFormattingSource);
-            let out = normalizePunctuationArtifacts(applySpokenFormattingPostprocess(correctedInput));
-            if (effectiveRewriteMode === "email_body") {
-              out = normalizeEmailBody(out);
-            }
-            out = preserveRequestedBulletLayout(rewriteRawFormattingSource, out);
-            out = preserveRequestedListHeading(
-              rewriteRawFormattingSource,
-              out,
-              explicitTargetLanguage ? effectiveOutputLanguage : (allowsLanguageChange ? "" : lang)
-            );
-            out = preserveRequestedParentheses(rewriteFormattedSource, out);
-            out = preserveRequestedEmojis(rewriteFormattedSource, out);
-            out = tidyBulletListOutput(out);
-            return out;
-          })(),
+          text: buildLocalRewriteFallbackText({
+            instruction,
+            sourceText: correctedInput,
+            rewriteMode: effectiveRewriteMode,
+            preferredLanguage: preferredLanguageForOutput
+          }),
           appliedMode: effectiveRewriteMode,
           appliedStyle: style,
           instruction,

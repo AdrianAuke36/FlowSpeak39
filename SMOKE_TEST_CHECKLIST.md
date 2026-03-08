@@ -49,12 +49,15 @@ Forventet:
 - `Signed out` popup vises
 - App forsøker ikke opptak
 
+Alt var riktig utenom, i menyen opp viser det "sing out" selvom du er utlogget. ""
+
 ### B2: Innlogging
 Steg:
 - Logg inn igjen
 Forventet:
 - Du kommer til Home
 - Backend vises som online
+riktig
 
 ### B3: Onboarding permissions
 Steg:
@@ -70,12 +73,17 @@ Forventet:
 - `Hei dette er en test.`
 - Blå overlay
 
+Hei dette er en test.
+
 ### B5: Korrigering i samme setning
 Input (si):
 - `Kaffe på torsdag eh nei fredag`
 Forventet:
 - Kun siste valg beholdes (`fredag`)
 - `torsdag` skal ikke stå igjen i slutttekst
+
+test 1:Kaffe fredag.
+test 2:Kaffe fredag.
 
 ### B6: Tegnsetting med stemme
 Input (si):
@@ -84,6 +92,10 @@ Input (si):
 Forventet:
 - `mat/brus`
 - `(test)`
+
+Test 1: Handleliste
+- mat
+- brus
 
 ### B7: Liste når det gir mening
 Input (si):
@@ -94,6 +106,10 @@ Forventet:
   - `- egg`
   - `- brød`
   - `- rosiner`
+Test 1:Handleliste
+- egg
+- brød
+- rosiner
 
 ### B8: Ikke hardkod handleliste
 Input (si):
@@ -104,6 +120,11 @@ Forventet:
   - `- pasta`
   - `- tomatsaus`
   - `- basilikum`
+  Test 1: Det vi trenger til middag:
+- det , til middag
+- pasta
+- tomatsaus
+- basilikum
 
 ### B9: Oversettelse (hovedtast + Shift)
 Input (si):
@@ -112,6 +133,15 @@ Forventet:
 - Grønn overlay
 - Engelsk output (ikke blanding med norsk)
 - Punktliste med naturlig heading
+test 1:Shopping list for tomorrow:
+- taco ingredients
+- eggs
+- milk
+Shopping list for tomorrow:
+- for tomorrow: taco
+- shirt
+- eggs
+- milk
 
 ### B10: Rewrite valgt tekst (hovedtast + Control)
 Steg:
@@ -122,6 +152,9 @@ Forventet:
 - Rød overlay
 - Markert tekst erstattes med kortere versjon
 
+test 1:Dette er en test. Jeg heter Adrian, er 26 år og liker å utvikle apper.
+det funket ikke, rød glød kom men ikke noe kortere tekst.  
+
 ### B11: Rewrite skal beholde språk
 Steg:
 - Marker engelsk tekst
@@ -129,14 +162,17 @@ Steg:
 Forventet:
 - Output forblir engelsk
 
+test 1: Hello, I'm Adrian, 26, and I enjoy developing apps.
+det funket
+
 ### B12: Quick reply context lagring (hovedtast + <)
 Steg:
-- Marker innkommende melding
 - Trykk hovedtast + <
 Forventet:
 - Ingen lydbar overlay åpnes
 - Check/saved feedback vises
 - Debug log har `Quick reply context saved`
+<<
 
 ### B13: Quick reply drafting fra lagret kontekst
 Steg:
@@ -147,11 +183,14 @@ Forventet:
 - Høflig tone
 - E-postformat hvis feltet er e-post
 
+test1: det fungerte ikke
+
 ### B14: Overlay-farger
 Forventet:
 - Blå = vanlig diktering
 - Grønn = oversettelse
 - Rød = rewrite
+test fungerte
 
 ### B15: Meny og UI
 Forventet:
@@ -188,22 +227,22 @@ Backend URL:
 A1 Health+auth: PASS/FAIL
 A2 Latency: PASS/FAIL (p95=___ms)
 
-B1 Signed-out popup: PASS/FAIL
-B2 Login: PASS/FAIL
-B3 Onboarding: PASS/FAIL
-B4 Dictation: PASS/FAIL
-B5 Correction last-intent: PASS/FAIL
-B6 Punctuation voice: PASS/FAIL
-B7 Handleliste formatting: PASS/FAIL
-B8 Generic list formatting: PASS/FAIL
-B9 Translation formatting/language: PASS/FAIL
-B10 Rewrite selected: PASS/FAIL
-B11 Rewrite keep language: PASS/FAIL
-B12 Save reply context: PASS/FAIL
-B13 Draft from saved context: PASS/FAIL
-B14 Overlay colors: PASS/FAIL
-B15 Menu/UI checks: PASS/FAIL
-B16 Settings checks: PASS/FAIL
+B1 Signed-out popup: PASS
+B2 Login: PASS
+B3 Onboarding: PASS
+B4 Dictation: PASS
+B5 Correction last-intent: PASS, men for kort.
+B6 Punctuation voice: PASS
+B7 Handleliste formatting: PASS
+B8 Generic list formatting: FAIL, ble ikke riktig format
+B9 Translation formatting/language: FAIL, feil format
+B10 Rewrite selected: FAIL, klarte ikke å korte ned tekst, men rød glød
+B11 Rewrite keep language: PASS
+B12 Save reply context: FAIL, checkmark kommer opp men bytter ut text.
+B13 Draft from saved context: FAIL
+B14 Overlay colors: PASS
+B15 Menu/UI checks: PASS
+B16 Settings checks: PASS
 
 Feil observert (kort):
 1)
@@ -215,3 +254,5 @@ Vedlegg:
 - latency-profile JSON
 - debug log utdrag
 ```
+
+

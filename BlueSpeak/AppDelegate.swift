@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         static let rewritePasteDelayNanos: UInt64 = 120_000_000
         static let fnDictationStartDelayNanos: UInt64 = 120_000_000
         static let fnReleaseGraceNanos: UInt64 = 220_000_000
+        static let quickReplyCaptureMinInterval: TimeInterval = 0.55
     }
 
     private struct PasteboardSnapshot {
@@ -68,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var pendingRewriteTargetApp: NSRunningApplication?
     private var quickReplyContextText: String = ""
     private var hasPendingQuickReplyContextRewrite: Bool = false
+    private var lastQuickReplyCaptureAt: Date = .distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogStore.shared.record(.info, "App launched")
@@ -391,15 +393,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if shouldSuppressTriggerShortcutsDuringCapture(event: event, flags: flags) {
             return nil
         }
-        if flags.contains(.maskShift) || flags.contains(.maskControl) {
-            return Unmanaged.passUnretained(event)
-        }
         guard isSelectedTriggerDownForQuickReplyEvent(flags: flags) else {
             return Unmanaged.passUnretained(event)
         }
         guard isQuickReplyContextShortcut(event) else {
+            if flags.contains(.maskShift) || flags.contains(.maskControl) {
+                return Unmanaged.passUnretained(event)
+            }
             return Unmanaged.passUnretained(event)
         }
+        let now = Date()
+        if now.timeIntervalSince(lastQuickReplyCaptureAt) < Constants.quickReplyCaptureMinInterval {
+            return nil
+        }
+        lastQuickReplyCaptureAt = now
 
         DispatchQueue.main.async { [weak self] in
             self?.triggerQuickReplyContextCapture()
@@ -458,6 +465,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func triggerQuickReplyContextCapture() {
+        guard settings.hasAuthenticatedSession else {
+            Task { @MainActor in
+                settings.requestSignedOutPopup()
+            }
+            openHome()
+            return
+        }
         cancelPendingFnStart()
         if dictation.isCaptureActive {
             dictation.cancelCapture()
@@ -710,19 +724,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let (snapshot, selectedText) = await readSelectedTextFromFocusedApp()
         defer { restorePasteboardSnapshot(snapshot) }
 
-        let trimmed = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        let contextResolver = ContextResolver()
+        let trimmedSelection = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let focusedFallback = contextResolver
+            .focusedTextForRewrite(maxLength: 9000)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let chosenText: String
+        let source: String
+        if !trimmedSelection.isEmpty {
+            chosenText = trimmedSelection
+            source = "selection"
+        } else if !focusedFallback.isEmpty {
+            chosenText = focusedFallback
+            source = "focused"
+        } else {
+            chosenText = ""
+            source = "none"
+        }
+
+        guard !chosenText.isEmpty else {
             NSSound.beep()
             AppLogStore.shared.record(.warning, "Quick reply context capture failed", metadata: ["reason": "No selected text"])
             return
         }
 
-        quickReplyContextText = trimmed
+        quickReplyContextText = chosenText
         hasPendingQuickReplyContextRewrite = true
         playQuickReplySavedSound()
         overlay.showSavedToast()
-        AppLogStore.shared.record(.info, "Quick reply context saved", metadata: ["chars": "\(trimmed.count)"])
-        print("💾 quick reply context saved | chars:", trimmed.count)
+        AppLogStore.shared.record(.info, "Quick reply context saved", metadata: ["chars": "\(chosenText.count)", "source": source])
+        print("💾 quick reply context saved | chars:", chosenText.count, "| source:", source)
     }
 
     private func playQuickReplySavedSound() {
@@ -1296,7 +1327,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func refreshSignOutMenuState() {
-        signOutMenuItem?.isEnabled = settings.hasAuthenticatedSession
+        let authenticated = settings.hasAuthenticatedSession
+        signOutMenuItem?.title = authenticated ? "Sign out" : "Sign in"
+        signOutMenuItem?.action = authenticated ? #selector(signOut) : #selector(openHome)
+        signOutMenuItem?.isEnabled = true
     }
 
     private func refreshLanguageMenuState() {
