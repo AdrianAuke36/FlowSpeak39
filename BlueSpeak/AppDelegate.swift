@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         static let rewritePasteDelayNanos: UInt64 = 120_000_000
         static let fnDictationStartDelayNanos: UInt64 = 120_000_000
         static let fnReleaseGraceNanos: UInt64 = 220_000_000
+        static let triggerPostReleaseSuppressionSeconds: TimeInterval = 0.20
         static let quickReplyCaptureMinInterval: TimeInterval = 0.55
     }
 
@@ -70,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var quickReplyContextText: String = ""
     private var hasPendingQuickReplyContextRewrite: Bool = false
     private var lastQuickReplyCaptureAt: Date = .distantPast
+    private var triggerShortcutSuppressionUntil: Date = .distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogStore.shared.record(.info, "App launched")
@@ -414,25 +416,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return nil
     }
 
-    private func shouldSuppressTriggerShortcutsDuringCapture(event _: CGEvent, flags: CGEventFlags) -> Bool {
-        let triggerIsDown: Bool
-        switch settings.shortcutTriggerKey {
-        case .function:
-            triggerIsDown = flags.contains(.maskSecondaryFn) || functionModifierIsDown
-        case .leftOption, .rightOption:
-            triggerIsDown = flags.contains(.maskAlternate) || leftOptionModifierIsDown || rightOptionModifierIsDown
-        case .leftCommand, .rightCommand:
-            triggerIsDown = flags.contains(.maskCommand) || leftCommandModifierIsDown || rightCommandModifierIsDown
+    private func shouldSuppressTriggerShortcutsDuringCapture(event: CGEvent, flags _: CGEventFlags) -> Bool {
+        // Keep the save-context shortcut available while trigger key is held.
+        if isQuickReplyContextShortcut(event) {
+            return false
         }
 
-        // Only suppress while the app is actively capturing so normal typing
-        // still works when dictation/rewrite is idle.
-        let captureActive =
-            dictation.isCaptureActive ||
-            isSelectionRewriteInProgress ||
-            isCapturingRewriteInstruction
-        guard captureActive else { return false }
-        guard triggerIsDown else { return false }
+        // Suppress only while trigger is physically down (or immediately after release)
+        // to avoid leaking browser/app shortcuts, but do not block internal rewrite copy/paste.
+        // Only use tracked physical modifier state (not event.flags), otherwise synthetic
+        // command combos used by rewrite (Cmd+C / Cmd+V) can be suppressed by mistake.
+        let triggerFlowActive = selectedTriggerIsDown || fnIsDown || Date() < triggerShortcutSuppressionUntil
+        guard triggerFlowActive else { return false }
         return true
     }
 
@@ -499,7 +494,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        if fnDown && controlDown && !didConsumeFnHoldForRewriteCombo && !dictation.isCaptureActive && !isSelectionRewriteInProgress {
+        if fnDown && controlDown && !didConsumeFnHoldForRewriteCombo && !isSelectionRewriteInProgress {
+            // If dictation already started (timing race), switch cleanly into rewrite capture.
+            if dictation.isCaptureActive {
+                dictation.cancelCapture()
+                overlay.hide()
+                updateStatusIcon(isRecording: false)
+            }
             fnIsDown = true
             didConsumeFnHoldForRewriteCombo = true
             cancelPendingFnStart()
@@ -521,6 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             scheduleFnStartIfNeeded()
         } else if !fnDown && fnIsDown {
             fnIsDown = false
+            triggerShortcutSuppressionUntil = Date().addingTimeInterval(Constants.triggerPostReleaseSuppressionSeconds)
             cancelPendingFnStart()
             didSetTranslationOverrideInCurrentFnHold = false
             if didConsumeFnHoldForRewriteCombo {
@@ -607,6 +609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isPersistentCaptureLocked = false
         isSelectionRewriteInProgress = false
         isCapturingRewriteInstruction = false
+        triggerShortcutSuppressionUntil = .distantPast
         pendingRewriteTargetApp = nil
         cancelPendingFnStart()
         cancelPendingFnReleaseAction()

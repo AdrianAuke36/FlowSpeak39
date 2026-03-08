@@ -2315,6 +2315,28 @@ function extractEmojis(text) {
   return String(text || "").match(/\p{Extended_Pictographic}/gu) || [];
 }
 
+function sourceAllowsEmojiInsertion(sourceText) {
+  const source = String(sourceText || "").trim();
+  if (!source) return false;
+  if (extractEmojis(source).length) return true;
+
+  // Emoji are allowed only when the user explicitly asked for them.
+  return /\b(?:emoji|smilefjes|smiley|gladfjes|winkefjes|hjerte|tommel\s*opp|tommel\s*ned|latterfjes|gråtefjes|rakett|ild|hake)\b/i.test(source);
+}
+
+function stripUnrequestedEmojis(sourceText, outputText) {
+  if (sourceAllowsEmojiInsertion(sourceText)) {
+    return String(outputText || "").trim();
+  }
+
+  return String(outputText || "")
+    .replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, "")
+    .replace(/[ \t]+([,.;!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function preserveRequestedEmojis(sourceText, outputText) {
   const requested = Array.from(new Set(extractEmojis(sourceText)));
   if (!requested.length) return String(outputText || "").trim();
@@ -2679,7 +2701,7 @@ function buildPolishSystemPrompt({
         ? "Translate for intended meaning and the best possible phrasing. Resolve fragmented speech, implied punctuation, and rough wording into the clearest natural translation."
         : "Preserve meaning, names, numbers, and formatting.";
 
-    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Spoken emoji words like 'smilefjes' should become actual emoji. Spoken punctuation words should become symbols (for example 'slash/slahs' -> '/', 'komma' -> ',', 'punktum' -> '.'). Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
+    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Convert spoken emoji words like 'smilefjes' to emoji only when those words are explicitly spoken. Never add emoji unless explicitly requested or already present in the input. Spoken punctuation words should become symbols (for example 'slash/slahs' -> '/', 'komma' -> ',', 'punktum' -> '.'). Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
     const uncertaintyRule = interpretationLevel === "meaning"
       ? "If key details are ambiguous, keep the wording general and do not guess specifics."
       : "";
@@ -2713,7 +2735,7 @@ function buildPolishSystemPrompt({
   const recipientRule = mode === "email_body"
     ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
     : "";
-  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. Spoken emoji words like 'smilefjes' -> actual emoji. Spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.'. Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
+  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. Convert spoken emoji words like 'smilefjes' to emoji only when those words are explicitly spoken. Never add emoji unless explicitly requested or already present in the input. Spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.'. Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
 
   return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${uncertaintyRule} ${recipientRule} ${spokenFormattingRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
@@ -3042,12 +3064,15 @@ function normalizeDraftReplyInstruction(instruction) {
   // Treat short "summarize" commands as summarization tasks, not literal reply points.
   const summaryKeyword = /\b(oppsummer(?:ing)?|oppsumer(?:ing)?|summarize|summarise|summary|sum up|tl;dr|tldr)\b/i;
   const summaryFormattingHint = /\b(punkt|punkter|bullet|liste|list)\b/i;
+  const veryShortSummaryHint = /\b(kort|kortfattet|short|brief|kjapt|raskt)\b/i;
   const summaryCommandOnly = /^(?:kan du\s+|please\s+)?(?:kort\s+)?(?:oppsummer(?:ing)?|oppsumer(?:ing)?|summarize|summarise|summary|sum up|tl;dr|tldr)(?:\s+i\s+(?:punkt(?:er)?|bullet(?: points?)?|liste|list))?\.?$/i;
   if (
     summaryKeyword.test(trimmed) &&
     (summaryCommandOnly.test(trimmed) || trimmed.split(/\s+/).filter(Boolean).length <= 4 || summaryFormattingHint.test(trimmed))
   ) {
-    return "Write a concise summary of the incoming message context in the same language. Keep only key points and do not add new facts.";
+    return veryShortSummaryHint.test(trimmed)
+      ? "Write a clearly much shorter summary of the incoming message context in the same language. Keep only the most essential points, do not restate sentence-by-sentence, and do not add new facts. Output one short sentence when possible (max two short sentences)."
+      : "Write a clearly shorter summary of the incoming message context in the same language. Keep only key points, avoid sentence-by-sentence restatement, and do not add new facts. Output 1-2 short sentences.";
   }
 
   const explicitPointMatch = trimmed.match(
@@ -3092,6 +3117,12 @@ function instructionRequestsSummary(instruction) {
   const normalized = String(instruction || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!normalized) return false;
   return /\b(oppsummer(?:ing)?|oppsumer(?:ing)?|summarize|summarise|summary|sum up|tl;dr|tldr)\b/.test(normalized);
+}
+
+function instructionRequestsVeryShortSummary(instruction) {
+  const normalized = String(instruction || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized || !instructionRequestsSummary(normalized)) return false;
+  return /\b(kort|kortfattet|kortere|brief|short|concise|kjapt|raskt)\b/.test(normalized);
 }
 
 function instructionRequestsBulletSummary(instruction) {
@@ -3179,6 +3210,59 @@ function localShortenText(text) {
   return out;
 }
 
+function wordCount(text) {
+  return String(text || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .length;
+}
+
+function trimToWordLimit(text, maxWords) {
+  const safeMax = Math.max(1, Math.floor(Number(maxWords) || 0));
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  if (words.length <= safeMax) return String(text || "").trim();
+  const trimmed = words.slice(0, safeMax).join(" ").replace(/[.,;:!?]*$/, "").trim();
+  return trimmed ? `${trimmed}…` : "";
+}
+
+function enforceSummaryBrevity({ sourceText, summaryText, strict = false }) {
+  const source = String(sourceText || "").trim();
+  let summary = String(summaryText || "").trim();
+  if (!source || !summary) return summary;
+
+  const sourceWords = wordCount(source);
+  const summaryWords = wordCount(summary);
+  if (sourceWords < 10 || summaryWords === 0) return summary;
+
+  let maxWordsByRatio = Math.max(
+    strict ? 9 : 10,
+    Math.floor(sourceWords * (strict ? 0.40 : 0.52))
+  );
+  // Avoid over-compressing short texts where key details can be dropped too easily.
+  if (strict && sourceWords <= 24) {
+    maxWordsByRatio = Math.max(maxWordsByRatio, Math.floor(sourceWords * 0.65));
+  }
+  const maxWords = strict
+    ? Math.min(maxWordsByRatio, 26)
+    : Math.min(maxWordsByRatio, 46);
+  const currentRatio = summaryWords / Math.max(1, sourceWords);
+  const needsCompaction = (
+    summaryWords > maxWords
+    || currentRatio > (strict ? 0.62 : 0.78)
+  );
+  if (!needsCompaction) return summary;
+
+  const locallyShortened = localShortenText(summary).trim();
+  if (wordCount(locallyShortened) < summaryWords) {
+    summary = locallyShortened;
+  }
+  if (wordCount(summary) > maxWords) {
+    summary = trimToWordLimit(summary, maxWords);
+  }
+  return summary.trim();
+}
+
 function buildLocalRewriteFallbackText({
   instruction,
   sourceText,
@@ -3204,6 +3288,7 @@ function buildLocalRewriteFallbackText({
   out = preserveRequestedListHeading(rewriteRawFormattingSource, out, preferredLanguage);
   out = preserveRequestedParentheses(rewriteFormattedSource, out);
   out = preserveRequestedEmojis(rewriteFormattedSource, out);
+  out = stripUnrequestedEmojis(rewriteFormattedSource, out);
   out = tidyBulletListOutput(out);
   return out.trim();
 }
@@ -3390,6 +3475,7 @@ async function handlePolish(body, requestSignal) {
     finalText = preserveRequestedListHeading(correctedInput, finalText, lang);
     finalText = preserveRequestedParentheses(commandAwareInput, finalText);
     finalText = preserveRequestedEmojis(commandAwareInput, finalText);
+    finalText = stripUnrequestedEmojis(commandAwareInput, finalText);
     finalText = tidyBulletListOutput(finalText);
     timings.totalMs = Date.now() - requestStartedAt;
     const retryCount = Math.max(0, (timings.modelAttempts?.length || 0) - 1);
@@ -3521,7 +3607,7 @@ async function handleRewrite(body, requestSignal) {
       ? "The spoken instruction is very brief. Keep the reply concise and express only that point without elaboration."
       : "";
     const singleDraftRule = "Return exactly one final draft only. Never include alternatives, notes, prefixes, or placeholders.";
-    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. Convert spoken emoji words like 'smilefjes' to actual emoji where appropriate. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
+    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. Convert spoken emoji words like 'smilefjes' to emoji only when those words are explicitly spoken. Never add emoji unless explicitly requested or already present in the source text. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
     const memoryRule = replyMemories.length
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
       : "";
@@ -3556,15 +3642,27 @@ async function handleRewrite(body, requestSignal) {
           return "End the email with a short, natural sign-off only if it clearly improves the reply.";
         })()
       : "";
+    const summaryRequested = instructionRequestsSummary(instruction);
+    const veryShortSummaryRequested = summaryRequested && instructionRequestsVeryShortSummary(instruction);
+    const summaryRule = veryShortSummaryRequested
+      ? "If the instruction asks for a short summary, compress aggressively: keep only essential points and make the output clearly much shorter than the source (usually around 20-45% of source length). Prefer one short sentence (max two short sentences only if needed)."
+      : summaryRequested
+        ? "If the instruction asks for a summary, compress aggressively: keep only the essential points and make the output substantially shorter than the source (usually around 30-60% of source length). Prefer 1-2 short sentences."
+        : "";
     const taskRule = draftReplyFromContext
       ? `Draft a complete send-ready reply to the provided incoming message context. The provided text is the message being answered, not the draft to rewrite. Use the incoming message plus the spoken instruction to write the full response the user should send. ${replyContextProfile?.extraRule || ""} ${isEmailReplyMode ? `The user is writing inside an email field, so format the output as an actual email reply body, not a chat reply. ${greetingRule} ${signoffRule}` : ""} Be polite, context-aware, and useful. Do not simply restate the spoken instruction, and do not return only a short fragment.`
       : isEmailReplyMode
         ? `Apply the user instruction to the provided text and keep the result in clear email format (not chat format). ${greetingRule} ${signoffRule}`
         : "Apply the user instruction to the provided text.";
-    const rewriteMaxTokens = draftReplyFromContext
+    const rewriteMaxTokensBase = draftReplyFromContext
       ? Math.max(OPENAI_MAX_TOKENS_REWRITE, replyContextProfile?.minTokens || 220)
       : OPENAI_MAX_TOKENS_REWRITE;
-    const system = `${taskRule} ${styleRule} ${langRule} ${baseSafetyRule} ${noAssumptionRule} ${concisePointRule} ${singleDraftRule} ${spokenFormattingRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
+    const rewriteMaxTokens = (
+      summaryRequested && !draftReplyFromContext
+        ? Math.max(80, Math.min(rewriteMaxTokensBase, veryShortSummaryRequested ? 128 : 180))
+        : rewriteMaxTokensBase
+    );
+    const system = `${taskRule} ${summaryRule} ${styleRule} ${langRule} ${baseSafetyRule} ${noAssumptionRule} ${concisePointRule} ${singleDraftRule} ${spokenFormattingRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
     const memorySection = replyMemories.length
       ? `\n\nRelevant reply memories:\n${replyMemories.map((memory) => {
         const triggerPart = memory.triggers ? ` (triggers: ${memory.triggers})` : "";
@@ -3617,6 +3715,14 @@ async function handleRewrite(body, requestSignal) {
     );
     finalText = preserveRequestedParentheses(rewriteFormattedSource, finalText);
     finalText = preserveRequestedEmojis(rewriteFormattedSource, finalText).trim();
+    finalText = stripUnrequestedEmojis(rewriteFormattedSource, finalText).trim();
+    if (summaryRequested) {
+      finalText = enforceSummaryBrevity({
+        sourceText: correctedInput,
+        summaryText: finalText,
+        strict: veryShortSummaryRequested
+      });
+    }
     finalText = tidyBulletListOutput(finalText);
     const languageMismatchDetected = (
       (!allowsLanguageChange && isLikelyWrongForTarget(finalText, lang))
