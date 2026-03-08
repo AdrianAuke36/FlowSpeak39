@@ -2039,9 +2039,8 @@ const SPOKEN_PUNCTUATION_ALIASES = [
 ];
 
 function hasExplicitBulletCommand(text) {
-  const source = String(text || "").trim();
-  if (!source) return false;
-  return BULLET_COMMAND_PREFIX_RE.test(source) || BULLET_COMMAND_HINT_RE.test(source);
+  // List handling is intentionally disabled.
+  return false;
 }
 
 function splitBulletItems(content) {
@@ -2208,49 +2207,14 @@ function buildCompactListItems(content) {
 }
 
 function buildImplicitBulletList(text) {
-  const source = String(text || "").replace(/\r\n/g, "\n").trim();
-  if (!source) return "";
-  if (/^\s*[-•*]\s+/m.test(source)) return "";
-  if (hasExplicitBulletCommand(source)) return "";
-  if (!BULLET_IMPLICIT_LIST_TRIGGER_RE.test(source)) return "";
-
-  const candidate = stripListLeadPhrases(source);
-  let normalizedItems = buildCorrectedListItems(candidate);
-  if (normalizedItems.length < 2 && BULLET_COMPACT_LIST_STRONG_TRIGGER_RE.test(source)) {
-    const compactItems = buildCompactListItems(candidate);
-    if (compactItems.length >= 2) normalizedItems = compactItems;
-  }
-
-  const uniqueItems = [];
-  const seen = new Set();
-  for (const item of normalizedItems) {
-    if (seen.has(item)) continue;
-    seen.add(item);
-    uniqueItems.push(item);
-  }
-
-  if (uniqueItems.length < 2) return "";
-
-  const simpleItems = uniqueItems.filter((item) => isLikelySimpleListItem(item) && !isListContextOnlyItem(item));
-  if (simpleItems.length < 2) return "";
-  if (simpleItems.length < Math.ceil(uniqueItems.length * 0.6)) return "";
-
-  const listBody = simpleItems.map((item) => `- ${item}`).join("\n");
-  const heading = applyListTimingQualifier(inferRequestedListHeading(source), source, listBody);
-  return heading ? `${heading}\n${listBody}` : listBody;
+  // List handling is intentionally disabled.
+  return "";
 }
 
 function applyBulletFormattingCommand(text) {
   const source = String(text || "").replace(/\r\n/g, "\n").trim();
-  if (!source) return source;
-  if (!hasExplicitBulletCommand(source)) return source;
-
-  const stripped = source.replace(BULLET_COMMAND_PREFIX_RE, "").trim();
-  if (!stripped) return source;
-
-  const items = buildCorrectedListItems(stripped);
-  if (!items.length) return source;
-  return items.map((item) => `- ${item}`).join("\n");
+  // List handling is intentionally disabled.
+  return source;
 }
 
 function applySpokenParenthesisCommands(text) {
@@ -2316,13 +2280,6 @@ function applySpokenFormattingPostprocess(text) {
   let out = String(text || "");
   if (!out) return out;
 
-  const explicitBullet = applyBulletFormattingCommand(out);
-  if (explicitBullet !== out) {
-    out = explicitBullet;
-  } else {
-    const implicitBullet = buildImplicitBulletList(out);
-    if (implicitBullet) out = implicitBullet;
-  }
   out = applySpokenParenthesisCommands(out);
   out = replaceSpokenPunctuationAliases(out);
   out = replaceSpokenEmojiAliases(out);
@@ -2379,102 +2336,34 @@ function preserveRequestedEmojis(sourceText, outputText) {
 }
 
 function preserveRequestedBulletLayout(sourceText, outputText) {
-  const source = String(sourceText || "").trim();
-  let out = String(outputText || "").trim();
-  if (!source || !out) return out;
-
-  const hasExplicit = hasExplicitBulletCommand(source);
-  const implicitFromSource = hasExplicit ? "" : buildImplicitBulletList(source);
-  const implicitFromOutput = hasExplicit ? "" : buildImplicitBulletList(out);
-  if (!hasExplicit && !implicitFromSource && !implicitFromOutput) return out;
-  if (/^\s*[-•*]\s+/m.test(out)) return out;
-
-  if (hasExplicit) {
-    const fromSource = applyBulletFormattingCommand(source);
-    if (fromSource && fromSource !== source) {
-      out = fromSource;
-    }
-    return out;
-  }
-
-  if (implicitFromOutput) {
-    out = implicitFromOutput;
-  } else if (implicitFromSource) {
-    out = implicitFromSource;
-  }
-  return out;
+  // List handling is intentionally disabled.
+  return String(outputText || "").trim();
 }
 
 function preserveRequestedListHeading(sourceText, outputText, preferredLanguage = "") {
-  const source = String(sourceText || "").trim();
-  let out = String(outputText || "").trim();
-  if (!source || !out) return out;
-
-  const lines = out.split("\n");
-  if (lines.length) {
-    const bulletLines = lines
-      .map((line, idx) => {
-        const match = line.match(/^\s*[-•*]\s+(.+)$/);
-        return match ? { idx, item: String(match[1] || "").trim() } : null;
-      })
-      .filter(Boolean);
-
-    const nonContextCount = bulletLines.filter((entry) => !isListContextOnlyItem(entry.item)).length;
-    if (nonContextCount >= 2) {
-      const pruned = lines.filter((line) => {
-        const match = line.match(/^\s*[-•*]\s+(.+)$/);
-        if (!match) return true;
-        return !isListContextOnlyItem(String(match[1] || "").trim());
-      });
-      out = pruned.join("\n").trim();
-    }
-  }
-
-  let heading = inferRequestedListHeading(source);
-  heading = resolveListHeadingLanguage(heading, out, preferredLanguage);
-  heading = applyListTimingQualifier(heading, source, out, preferredLanguage);
-  if (!heading) return out;
-  if (!/^\s*[-•*]\s+/m.test(out)) return out;
-  if (new RegExp(`^\\s*${escapeRegExp(heading)}\\s*$`, "mi").test(out)) return out;
-
-  const currentLines = out.split("\n");
-  const firstBulletIdx = currentLines.findIndex((line) => /^\s*[-•*]\s+/.test(line));
-  if (firstBulletIdx > 0) {
-    const normalizedLines = [heading, ...currentLines.slice(firstBulletIdx)];
-    out = normalizedLines.join("\n").trim();
-    return out;
-  }
-
-  return `${heading}\n${out}`;
+  // List handling is intentionally disabled.
+  return String(outputText || "").trim();
 }
 
 function tidyBulletListOutput(text) {
-  let out = String(text || "").trim();
+  // List handling is intentionally disabled.
+  const out = String(text || "").trim();
   if (!out) return out;
-  if (!/^\s*[-•*]\s+/m.test(out)) return out;
 
-  out = out
+  const lines = out
     .split("\n")
-    .map((line) => {
-      const match = line.match(/^(\s*[-•*]\s+)(.+)$/);
-      if (!match) return line;
-      const prefix = match[1];
-      let item = String(match[2] || "").replace(/[.,;:]+$/g, "").trim();
-      item = item
-        .replace(/^(?:handleliste|shopping\s*list|shoppinglist|grocery\s*list|innkjøpsliste)\s*:\s*/i, "")
-        .replace(/^(?:det\s+vi\s+trenger\s+til\s+middag|what\s+we\s+need\s+for\s+dinner)\s*:\s*/i, "")
-        .replace(/^(?:i\s+want|jeg\s+ønsker|jeg\s+vil\s+ha|we\s+need|vi\s+trenger)\s+/i, "")
-        .trim();
-      if (/^(?:handleliste|shopping\s*list|shoppinglist|grocery\s*list|innkjøpsliste|det\s+vi\s+trenger\s+til\s+middag|what\s+we\s+need\s+for\s+dinner)\s*:?$/i.test(item)) {
-        return "";
-      }
-      return item ? `${prefix}${item}` : "";
-    })
-    .filter(Boolean)
-    .join("\n")
-    .trim();
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return "";
 
-  return out;
+  const listPrefixRe = /^(?:[-•*]\s+|\d+[.)]\s+)/;
+  const listLikeCount = lines.filter((line) => listPrefixRe.test(line)).length;
+  if (!listLikeCount) return out;
+
+  const normalized = lines.map((line) => line.replace(listPrefixRe, "").trim()).filter(Boolean);
+  if (!normalized.length) return "";
+
+  return normalized.join("\n");
 }
 
 function extractFirstParentheticalSegment(text) {
@@ -2790,7 +2679,7 @@ function buildPolishSystemPrompt({
         ? "Translate for intended meaning and the best possible phrasing. Resolve fragmented speech, implied punctuation, and rough wording into the clearest natural translation."
         : "Preserve meaning, names, numbers, and formatting.";
 
-    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Also, when the content clearly represents a short-item list (for example shopping list, ingredient list, checklist, todo items, or 'trenger vi ...') format it as a clean bullet list. For shopping/grocery intent, include exactly one heading ('Handleliste' or 'Shopping list') and never duplicate that heading as a bullet item. Keep only actual list items in bullets. Spoken emoji words like 'smilefjes' should become actual emoji. Spoken punctuation words should become symbols (for example 'slash/slahs' -> '/', 'komma' -> ',', 'punktum' -> '.'). Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
+    const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Spoken emoji words like 'smilefjes' should become actual emoji. Spoken punctuation words should become symbols (for example 'slash/slahs' -> '/', 'komma' -> ',', 'punktum' -> '.'). Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
     const uncertaintyRule = interpretationLevel === "meaning"
       ? "If key details are ambiguous, keep the wording general and do not guess specifics."
       : "";
@@ -2824,7 +2713,7 @@ function buildPolishSystemPrompt({
   const recipientRule = mode === "email_body"
     ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
     : "";
-  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. Also infer list layout when intent is clearly list-like (shopping list, ingredients, todo/checklist, 'trenger vi ...'): output a concise bullet list. For shopping/grocery intent, include exactly one heading ('Handleliste' or 'Shopping list') and do not repeat the heading inside bullets. Keep only real items as bullet points. Spoken emoji words like 'smilefjes' -> actual emoji. Spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.'. Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
+  const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. Spoken emoji words like 'smilefjes' -> actual emoji. Spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.'. Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
 
   return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${uncertaintyRule} ${recipientRule} ${spokenFormattingRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
@@ -3158,10 +3047,7 @@ function normalizeDraftReplyInstruction(instruction) {
     summaryKeyword.test(trimmed) &&
     (summaryCommandOnly.test(trimmed) || trimmed.split(/\s+/).filter(Boolean).length <= 4 || summaryFormattingHint.test(trimmed))
   ) {
-    const bulletHint = summaryFormattingHint.test(trimmed)
-      ? " Format the summary as bullet points."
-      : "";
-    return `Write a concise summary of the incoming message context in the same language.${bulletHint} Keep only key points and do not add new facts.`;
+    return "Write a concise summary of the incoming message context in the same language. Keep only key points and do not add new facts.";
   }
 
   const explicitPointMatch = trimmed.match(
@@ -3209,9 +3095,8 @@ function instructionRequestsSummary(instruction) {
 }
 
 function instructionRequestsBulletSummary(instruction) {
-  const normalized = String(instruction || "").toLowerCase().replace(/\s+/g, " ").trim();
-  if (!normalized) return false;
-  return /\b(punkt|punkter|bullet|bullets|bullet points|liste|list)\b/.test(normalized);
+  // List output is intentionally disabled.
+  return false;
 }
 
 function instructionRequestsShorten(instruction) {
@@ -3636,7 +3521,7 @@ async function handleRewrite(body, requestSignal) {
       ? "The spoken instruction is very brief. Keep the reply concise and express only that point without elaboration."
       : "";
     const singleDraftRule = "Return exactly one final draft only. Never include alternatives, notes, prefixes, or placeholders.";
-    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. If asked for bullet points, output bullet points. If the text clearly indicates list intent (shopping list, ingredient list, todo/checklist), use bullet points even without an explicit bullet command. For shopping/grocery intent, include exactly one heading ('Handleliste' or 'Shopping list') and do not include that heading as a bullet item. Convert spoken emoji words like 'smilefjes' to actual emoji where appropriate. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
+    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. Convert spoken emoji words like 'smilefjes' to actual emoji where appropriate. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
     const memoryRule = replyMemories.length
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
       : "";
