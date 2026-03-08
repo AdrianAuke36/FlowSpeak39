@@ -96,6 +96,19 @@ final class ContextResolver {
         return clipForRewriteInput(trimmed, maxLength: maxLength)
     }
 
+    /// Attempts to read selected text directly from Accessibility API.
+    /// Useful when synthetic Cmd+C capture is blocked or delayed in some apps.
+    func selectedTextForQuickReply(maxLength: Int = 9000) -> String? {
+        guard maxLength > 0 else { return nil }
+        guard let focused = focusedElement() else { return nil }
+
+        let selected = (copyStringAttr(focused, kAXSelectedTextAttribute) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selected.isEmpty else { return nil }
+
+        return clipForRewriteInput(selected, maxLength: maxLength)
+    }
+
     func draftMode(for ctx: FieldContext) -> DraftMode {
         switch ctx.bundleId {
         case "com.openai.chatgpt":          return .chatMessage
@@ -394,7 +407,8 @@ final class ContextResolver {
         let blockedTerms = [
             "send", "sende", "subject", "emne", "mottaker", "recipient", "compose", "ny melding",
             "new message", "sans serif", "flow", "bluespeak", "settings", "home", "continue",
-            "til", "cc", "bcc", "inbox", "innboks"
+            "til", "cc", "bcc", "inbox", "innboks",
+            "bruk", "bruker", "bruk app i fokus", "use focused app", "focused app", "fokus", "focus"
         ]
         if blockedTerms.contains(where: { lower == $0 || lower.contains($0) }) {
             return 0

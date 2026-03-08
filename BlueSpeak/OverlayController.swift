@@ -13,9 +13,9 @@ final class OverlayController {
         static let panelSize = NSSize(width: 132, height: 56)
         static let panelBottomOffset: CGFloat = 32
         static let hideDelay: TimeInterval = 0.25
-        static let saveToastSize = NSSize(width: 72, height: 72)
-        static let saveToastBottomOffset: CGFloat = 34
-        static let saveToastDuration: TimeInterval = 2.3
+        static let saveToastSize = NSSize(width: 220, height: 56)
+        static let saveToastBottomOffset: CGFloat = 38
+        static let saveToastDuration: TimeInterval = 1.85
     }
 
     private var panel: NSPanel?
@@ -66,6 +66,14 @@ final class OverlayController {
     func showThinking(_ text: String) { }
 
     func showSavedToast() {
+        showSaveToast(kind: .saved)
+    }
+
+    func showSaveFailedToast() {
+        showSaveToast(kind: .failed)
+    }
+
+    private func showSaveToast(kind: SaveToastKind) {
         pendingSaveToastHideWorkItem?.cancel()
         pendingSaveToastHideWorkItem = nil
 
@@ -73,7 +81,7 @@ final class OverlayController {
             setupSaveToastPanel()
         }
         positionSaveToastBottomCenter()
-        saveToastPanel?.contentView = NSHostingView(rootView: SaveToastPanelView())
+        saveToastPanel?.contentView = NSHostingView(rootView: saveToastContent(for: kind))
         saveToastPanel?.orderFrontRegardless()
 
         let work = DispatchWorkItem { [weak self] in
@@ -136,7 +144,7 @@ final class OverlayController {
         )
 
         p.isFloatingPanel = true
-        p.level = .statusBar
+        p.level = .popUpMenu
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         p.hidesOnDeactivate = false
         p.ignoresMouseEvents = true
@@ -157,8 +165,22 @@ final class OverlayController {
         panel?.orderFrontRegardless()
     }
 
+    private func preferredScreen() -> NSScreen? {
+        if let keyWindowScreen = NSApp.keyWindow?.screen {
+            return keyWindowScreen
+        }
+        let mouseLocation = NSEvent.mouseLocation
+        if let mouseScreen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) {
+            return mouseScreen
+        }
+        if let visibleWindowScreen = NSApp.windows.first(where: { $0.isVisible })?.screen {
+            return visibleWindowScreen
+        }
+        return NSScreen.main
+    }
+
     private func positionBottomCenter() {
-        guard let screen = NSScreen.main, let panel else { return }
+        guard let screen = preferredScreen(), let panel else { return }
         let frame = screen.visibleFrame
         let w = Constants.panelSize.width
         let h = Constants.panelSize.height
@@ -168,7 +190,7 @@ final class OverlayController {
     }
 
     private func positionSaveToastBottomCenter() {
-        guard let screen = NSScreen.main, let saveToastPanel else { return }
+        guard let screen = preferredScreen(), let saveToastPanel else { return }
         let frame = screen.visibleFrame
         let w = Constants.saveToastSize.width
         let h = Constants.saveToastSize.height

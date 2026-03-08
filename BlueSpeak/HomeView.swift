@@ -1679,7 +1679,7 @@ struct Sidebar: View {
                 tipRow(icon: "mic.fill", text: "Hold \(settings.shortcutTriggerKey.compactLabel) to dictate")
                 tipRow(icon: "globe", text: "\(settings.shortcutTriggerKey.compactLabel) + Shift to translate")
                 tipRow(icon: "wand.and.stars", text: "\(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite")
-                tipRow(icon: "square.and.arrow.down.on.square", text: "\(settings.shortcutTriggerKey.compactLabel) + < to save context")
+                tipRow(icon: "square.and.arrow.down.on.square", text: "\(settings.shortcutTriggerKey.compactLabel) + K to save context")
             }
             .padding(.all, 12)
             .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)

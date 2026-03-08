@@ -3000,7 +3000,8 @@ function looksLikeEmailDisplayName(value) {
   const blockedTerms = [
     "send", "sende", "subject", "emne", "recipient", "mottaker", "compose",
     "new message", "ny melding", "inbox", "innboks", "cc", "bcc", "to",
-    "til", "sans serif", "flowspeak"
+    "til", "sans serif", "flowspeak",
+    "bruk", "bruker", "bruk app i fokus", "use focused app", "focused app", "focus", "fokus"
   ];
   if (blockedTerms.some((term) => lower === term || lower.includes(term))) {
     return false;
@@ -3013,7 +3014,10 @@ function looksLikeEmailDisplayName(value) {
 
   const namePartPattern = /^[\p{L}'-]+$/u;
   const capitalizedParts = parts.filter((part) => namePartPattern.test(part) && /^[\p{Lu}]/u.test(part)).length;
-  return capitalizedParts >= 1;
+  if (parts.length === 1) {
+    return capitalizedParts === 1;
+  }
+  return capitalizedParts >= 2;
 }
 
 function extractEmailReplyMetadata(text) {

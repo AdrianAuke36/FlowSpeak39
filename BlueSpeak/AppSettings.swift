@@ -170,7 +170,7 @@ enum ShortcutTriggerKey: String, CaseIterable, Identifiable {
     }
 
     var saveReplyContextShortcut: String {
-        "\(label) + <"
+        "\(label) + K"
     }
 
     var summary: String {
@@ -860,7 +860,7 @@ final class AppSettings: ObservableObject {
 
     var shortcutInstructionText: String {
         let trigger = shortcutTriggerKey.label
-        return "Hold \(trigger) for å starte diktering. Slipp \(trigger) for å sette inn teksten. Hold \(trigger) + Shift for oversettelse i én diktering. Marker tekst og trykk \(trigger) + < for å lagre siste melding midlertidig. Hold \(trigger) + Control mens du sier rewrite-instruksjonen, og slipp \(trigger) for å kjøre."
+        return "Hold \(trigger) for å starte diktering. Slipp \(trigger) for å sette inn teksten. Hold \(trigger) + Shift for oversettelse i én diktering. Marker tekst og trykk \(trigger) + K for å lagre siste melding midlertidig. Hold \(trigger) + Control mens du sier rewrite-instruksjonen, og slipp \(trigger) for å kjøre."
     }
 
     @MainActor

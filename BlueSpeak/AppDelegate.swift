@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private enum Constants {
         static let backendPollIntervalNanos: UInt64 = 15_000_000_000
         static let rewriteCopyDelayNanos: UInt64 = 170_000_000
+        static let quickReplyCopyDelayNanos: UInt64 = 260_000_000
+        static let quickReplyWaitReleaseStepNanos: UInt64 = 35_000_000
+        static let quickReplyWaitReleaseMaxSteps: Int = 8
         static let rewritePasteDelayNanos: UInt64 = 120_000_000
         static let fnDictationStartDelayNanos: UInt64 = 120_000_000
         static let fnReleaseGraceNanos: UInt64 = 220_000_000
@@ -308,6 +311,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if settings.isShortcutCaptureActive {
             return false
         }
+        // Quick-reply key handling is primarily done by the CGEvent tap.
+        // Avoid double-triggering from NSEvent monitors when tap is active.
+        if quickReplyKeyEventTap != nil {
+            return false
+        }
         if event.isARepeat {
             return false
         }
@@ -319,6 +327,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return false
         }
 
+        guard shouldAcceptQuickReplyTrigger() else {
+            return true
+        }
         triggerQuickReplyContextCapture()
         return true
     }
@@ -404,11 +415,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return Unmanaged.passUnretained(event)
         }
-        let now = Date()
-        if now.timeIntervalSince(lastQuickReplyCaptureAt) < Constants.quickReplyCaptureMinInterval {
+        guard shouldAcceptQuickReplyTrigger() else {
             return nil
         }
-        lastQuickReplyCaptureAt = now
 
         DispatchQueue.main.async { [weak self] in
             self?.triggerQuickReplyContextCapture()
@@ -447,16 +456,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func isQuickReplyContextShortcut(_ event: NSEvent) -> Bool {
-        event.keyCode == UInt16(kVK_ISO_Section) ||
-            (event.charactersIgnoringModifiers?.trimmingCharacters(in: .whitespacesAndNewlines) == "<")
+        if event.keyCode == UInt16(kVK_ANSI_K) {
+            return true
+        }
+        let chars = event.charactersIgnoringModifiers?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return chars == "k"
     }
 
     private func isQuickReplyContextShortcut(_ event: CGEvent) -> Bool {
-        if event.getIntegerValueField(.keyboardEventKeycode) == Int64(kVK_ISO_Section) {
+        if event.getIntegerValueField(.keyboardEventKeycode) == Int64(kVK_ANSI_K) {
             return true
         }
         guard let nsEvent = NSEvent(cgEvent: event) else { return false }
         return isQuickReplyContextShortcut(nsEvent)
+    }
+
+    private func shouldAcceptQuickReplyTrigger() -> Bool {
+        let now = Date()
+        if now.timeIntervalSince(lastQuickReplyCaptureAt) < Constants.quickReplyCaptureMinInterval {
+            return false
+        }
+        lastQuickReplyCaptureAt = now
+        return true
     }
 
     private func triggerQuickReplyContextCapture() {
@@ -719,16 +742,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         isSavingQuickReplyContext = true
         defer { isSavingQuickReplyContext = false }
+        let contextResolver = ContextResolver()
 
         let targetApp = NSWorkspace.shared.frontmostApplication
         targetApp?.activate(options: [])
-        try? await Task.sleep(nanoseconds: Constants.rewriteCopyDelayNanos)
+        await waitForQuickReplyTriggerReleaseIfNeeded()
+        try? await Task.sleep(nanoseconds: Constants.quickReplyCopyDelayNanos)
 
-        let (snapshot, selectedText) = await readSelectedTextFromFocusedApp()
+        let (snapshot, selectedText) = await readSelectedTextFromFocusedApp(copyDelayNanos: Constants.quickReplyCopyDelayNanos)
         defer { restorePasteboardSnapshot(snapshot) }
 
-        let contextResolver = ContextResolver()
         let trimmedSelection = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let axSelection = contextResolver
+            .selectedTextForQuickReply(maxLength: 9000)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let focusedFallback = contextResolver
             .focusedTextForRewrite(maxLength: 9000)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -736,7 +763,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let source: String
         if !trimmedSelection.isEmpty {
             chosenText = trimmedSelection
-            source = "selection"
+            source = "selection_copy"
+        } else if !axSelection.isEmpty {
+            chosenText = axSelection
+            source = "selection_ax"
         } else if !focusedFallback.isEmpty {
             chosenText = focusedFallback
             source = "focused"
@@ -747,6 +777,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard !chosenText.isEmpty else {
             NSSound.beep()
+            overlay.showSaveFailedToast()
             AppLogStore.shared.record(.warning, "Quick reply context capture failed", metadata: ["reason": "No selected text"])
             return
         }
@@ -759,6 +790,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         print("💾 quick reply context saved | chars:", chosenText.count, "| source:", source)
     }
 
+    @MainActor
+    private func waitForQuickReplyTriggerReleaseIfNeeded() async {
+        var steps = 0
+        while selectedTriggerIsDown && steps < Constants.quickReplyWaitReleaseMaxSteps {
+            steps += 1
+            try? await Task.sleep(nanoseconds: Constants.quickReplyWaitReleaseStepNanos)
+        }
+    }
+
     private func playQuickReplySavedSound() {
         if let sound = NSSound(named: "Glass") ?? NSSound(named: "Hero") {
             sound.play()
@@ -768,12 +808,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @MainActor
-    private func readSelectedTextFromFocusedApp() async -> (PasteboardSnapshot, String) {
+    private func readSelectedTextFromFocusedApp(copyDelayNanos: UInt64 = Constants.rewriteCopyDelayNanos) async -> (PasteboardSnapshot, String) {
         let snapshot = capturePasteboardSnapshot()
         let sentinel = "__bluespeak_selection__\(UUID().uuidString)"
         writeStringToPasteboard(sentinel)
         sendCmdC()
-        try? await Task.sleep(nanoseconds: Constants.rewriteCopyDelayNanos)
+        try? await Task.sleep(nanoseconds: copyDelayNanos)
         let copiedText = NSPasteboard.general.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if copiedText == sentinel {

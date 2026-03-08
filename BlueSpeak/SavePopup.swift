@@ -121,13 +121,93 @@ struct SaveCheckmark: View {
 }
 
 struct SaveToastPanelView: View {
-    @State private var isVisible = true
+    @State private var opacity: Double = 0
+    @State private var scale: CGFloat = 0.94
 
     var body: some View {
-        SaveCheckmark(isVisible: $isVisible)
-            .onAppear {
-                isVisible = true
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .systemGreen))
+            Text("Tekst lagret")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+        )
+        .opacity(opacity)
+        .scaleEffect(scale)
+        .onAppear {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                opacity = 1
+                scale = 1
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.bottom, 4)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+struct SaveFailedToastPanelView: View {
+    @State private var opacity: Double = 0
+    @State private var scale: CGFloat = 0.94
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "xmark.octagon.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .systemOrange))
+            Text("Ingen tekst markert")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+        )
+        .opacity(opacity)
+        .scaleEffect(scale)
+        .onAppear {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                opacity = 1
+                scale = 1
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.bottom, 4)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+enum SaveToastKind {
+    case saved
+    case failed
+}
+
+@ViewBuilder
+func saveToastContent(for kind: SaveToastKind) -> some View {
+    switch kind {
+    case .saved:
+        SaveToastPanelView()
+    case .failed:
+        SaveFailedToastPanelView()
     }
 }
 
