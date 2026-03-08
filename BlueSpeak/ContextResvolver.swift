@@ -233,9 +233,8 @@ final class ContextResolver {
             }
         }
 
-        var childrenRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
-              let children = childrenRef as? [AXUIElement] else { return nil }
+        let children = copyChildren(element)
+        guard !children.isEmpty else { return nil }
 
         for child in children {
             if let found = findAddressBarValue(in: child, depth: depth + 1) {
@@ -380,9 +379,8 @@ final class ContextResolver {
             }
         }
 
-        var childrenRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
-              let children = childrenRef as? [AXUIElement] else { return }
+        let children = copyChildren(element)
+        guard !children.isEmpty else { return }
 
         for child in children {
             collectVisibleStrings(in: child, remainingNodes: &remainingNodes, into: &results)
@@ -444,7 +442,8 @@ final class ContextResolver {
         var focused: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused)
         guard err == .success, let el = focused else { return nil }
-        return (el as! AXUIElement)
+        guard CFGetTypeID(el) == AXUIElementGetTypeID() else { return nil }
+        return unsafeBitCast(el, to: AXUIElement.self)
     }
 
     private func copyStringAttr(_ el: AXUIElement, _ attr: String) -> String? {
@@ -458,7 +457,33 @@ final class ContextResolver {
         var value: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(el, attr as CFString, &value)
         guard err == .success, let element = value else { return nil }
-        return (element as! AXUIElement)
+        guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+        return unsafeBitCast(element, to: AXUIElement.self)
+    }
+
+    private func copyChildren(_ el: AXUIElement) -> [AXUIElement] {
+        var childrenRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+              let rawChildren = childrenRef else {
+            return []
+        }
+        guard CFGetTypeID(rawChildren) == CFArrayGetTypeID() else {
+            return []
+        }
+
+        let cfArray = unsafeBitCast(rawChildren, to: CFArray.self)
+        let count = CFArrayGetCount(cfArray)
+        guard count > 0 else { return [] }
+
+        var results: [AXUIElement] = []
+        results.reserveCapacity(count)
+        for index in 0..<count {
+            guard let rawValue = CFArrayGetValueAtIndex(cfArray, index) else { continue }
+            let candidate = unsafeBitCast(rawValue, to: CFTypeRef.self)
+            guard CFGetTypeID(candidate) == AXUIElementGetTypeID() else { continue }
+            results.append(unsafeBitCast(candidate, to: AXUIElement.self))
+        }
+        return results
     }
 
     // NY: konfigurerbar maxLength

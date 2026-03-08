@@ -1829,6 +1829,30 @@ function normalizeEmailBody(text) {
   let out = String(text || "").replace(/\r\n/g, "\n").trim();
   if (!out) return out;
 
+  const isPriceLikePrefix = (value) => {
+    const candidate = String(value || "").trim();
+    if (!candidate) return false;
+    return /\d/.test(candidate) && /\b(?:kr|nok|stk\.?|pr\.?\s*stk\.?|pris|price)\b/i.test(candidate);
+  };
+
+  // Guard: remove accidental amount snippets prepended before greeting.
+  const earlyLines = out.split("\n");
+  if (
+    earlyLines.length > 1 &&
+    isPriceLikePrefix(earlyLines[0]) &&
+    /^(Hei|Hi|Hello|Dear)\b/i.test(String(earlyLines[1] || "").trim())
+  ) {
+    earlyLines.shift();
+    out = earlyLines.join("\n").trimStart();
+  }
+  out = out.replace(
+    /^([^\n]{0,120}?)(Hei|Hi|Hello|Dear)\b/i,
+    (full, prefix, greeting) => {
+      if (!isPriceLikePrefix(prefix)) return String(full);
+      return capitalizeFirstLetter(String(greeting || "").toLowerCase());
+    }
+  );
+
   out = out.replace(
     /^(Hei|Hi|Hello|Dear)\s*,?\s*(Hei|Hi|Hello|Dear)\b\s*,?/i,
     (_, g) => `${capitalizeFirstLetter(String(g || "").toLowerCase())},`
@@ -3017,8 +3041,16 @@ function looksLikeEmailDisplayName(value) {
   const cleaned = String(value || "")
     .replace(/\s+/g, " ")
     .replace(/^['"]|['"]$/g, "")
+    .replace(/\s*\([^)]*@[^)]+\)\s*$/i, "")
+    .replace(/\s*<[^>]+>\s*$/i, "")
     .trim();
   if (!cleaned || cleaned.length > 60 || /\d/.test(cleaned)) {
+    return false;
+  }
+  if (/[()<>[\]{}]/.test(cleaned)) {
+    return false;
+  }
+  if (/\b(?:kr|nok|stk\.?|pr\.?\s*stk\.?|pris|price)\b/i.test(cleaned)) {
     return false;
   }
 
@@ -3046,6 +3078,19 @@ function looksLikeEmailDisplayName(value) {
   return capitalizedParts >= 2;
 }
 
+function sanitizeEmailDisplayNameCandidate(value) {
+  const cleaned = String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/^['"]|['"]$/g, "")
+    .replace(/\s*\([^)]*@[^)]+\)\s*$/i, "")
+    .replace(/\s*<[^>]+>\s*$/i, "")
+    .trim();
+  if (!looksLikeEmailDisplayName(cleaned)) {
+    return "";
+  }
+  return cleaned;
+}
+
 function extractEmailReplyMetadata(text) {
   const raw = String(text || "");
   const lines = raw
@@ -3058,28 +3103,36 @@ function extractEmailReplyMetadata(text) {
   for (const line of headerLines) {
     const directMatch = line.match(/^"?([^"<]{2,120}?)"?\s*<[^>]+>$/);
     if (directMatch?.[1]) {
-      senderDisplayName = directMatch[1].trim();
-      break;
+      const candidate = sanitizeEmailDisplayNameCandidate(directMatch[1]);
+      if (candidate) {
+        senderDisplayName = candidate;
+        break;
+      }
     }
 
     const prefixedMatch = line.match(/^(?:from|fra):\s*"?([^"<]{2,120}?)"?\s*(?:<[^>]+>)?$/i);
     if (prefixedMatch?.[1]) {
-      senderDisplayName = prefixedMatch[1].trim();
-      break;
+      const candidate = sanitizeEmailDisplayNameCandidate(prefixedMatch[1]);
+      if (candidate) {
+        senderDisplayName = candidate;
+        break;
+      }
     }
 
     if (!senderDisplayName && looksLikeEmailDisplayName(line)) {
-      senderDisplayName = line;
+      senderDisplayName = sanitizeEmailDisplayNameCandidate(line);
       break;
     }
   }
 
-  const cleanedDisplayName = senderDisplayName
-    .replace(/\s+/g, " ")
-    .replace(/^['"]|['"]$/g, "")
-    .trim();
+  const cleanedDisplayName = sanitizeEmailDisplayNameCandidate(senderDisplayName);
   const nameParts = cleanedDisplayName.split(/\s+/).filter(Boolean);
-  const greetingName = nameParts.length ? nameParts[0] : "";
+  const rawGreetingName = nameParts.length ? nameParts[0] : "";
+  const greetingName = (
+    rawGreetingName &&
+    isLikelyPersonNameToken(rawGreetingName) &&
+    !isGreetingWord(rawGreetingName)
+  ) ? rawGreetingName : "";
 
   return {
     senderDisplayName: cleanedDisplayName,

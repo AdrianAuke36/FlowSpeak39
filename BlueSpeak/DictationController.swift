@@ -52,6 +52,7 @@ final class DictationController: NSObject {
     private(set) var isStarting: Bool = false
     var isCaptureActive: Bool { isRecording || isStarting }
     private var finalText: String = ""
+    private var hasReceivedTranscriptInCurrentCapture: Bool = false
     private var startTokenCounter: Int = 0
     private var expectedStartToken: Int = 0
 
@@ -110,6 +111,7 @@ final class DictationController: NSObject {
         guard !isRecording, !isStarting else { return }
         resetSpeculativeState(cancel: true)
         finalText = ""
+        hasReceivedTranscriptInCurrentCapture = false
         startTokenCounter += 1
         let token = startTokenCounter
         expectedStartToken = token
@@ -142,6 +144,8 @@ final class DictationController: NSObject {
         if isStarting && !isRecording {
             clearOneShotOutputLanguageOverride()
             cancelPendingStart()
+            finalText = ""
+            hasReceivedTranscriptInCurrentCapture = false
             return
         }
         guard isRecording else { return }
@@ -150,7 +154,7 @@ final class DictationController: NSObject {
         speculativeDebounceWorkItem?.cancel()
         speculativeDebounceWorkItem = nil
 
-        let raw = polishBasic(finalText)
+        let raw = consumeCapturedTranscript()
         guard !raw.isEmpty else {
             resetSpeculativeState(cancel: true)
             return
@@ -255,15 +259,17 @@ final class DictationController: NSObject {
         if isStarting && !isRecording {
             clearOneShotOutputLanguageOverride()
             cancelPendingStart()
-            return ""
+            return consumeCapturedTranscript()
         }
-        guard isRecording else { return "" }
+        guard isRecording else {
+            return consumeCapturedTranscript()
+        }
 
         stopInternal()
         speculativeDebounceWorkItem?.cancel()
         speculativeDebounceWorkItem = nil
 
-        let captured = polishBasic(finalText)
+        let captured = consumeCapturedTranscript()
         resetSpeculativeState(cancel: true)
         return captured
     }
@@ -273,6 +279,7 @@ final class DictationController: NSObject {
         stopInternal()
         resetSpeculativeState(cancel: true)
         finalText = ""
+        hasReceivedTranscriptInCurrentCapture = false
     }
 
     // MARK: - Insert
@@ -1306,6 +1313,7 @@ final class DictationController: NSObject {
                 let partial = result.bestTranscription.formattedString
                 DispatchQueue.main.async {
                     self.finalText = partial
+                    self.hasReceivedTranscriptInCurrentCapture = true
                     self.onPartial?(partial)
                     self.maybeStartSpeculativeDraft(with: partial)
                 }
@@ -1316,12 +1324,23 @@ final class DictationController: NSObject {
                     let shouldNotify = self.isRecording || self.isStarting
                     self.stopInternal()
                     self.resetSpeculativeState(cancel: true)
+                    self.finalText = ""
+                    self.hasReceivedTranscriptInCurrentCapture = false
                     if shouldNotify {
                         self.onCaptureInterrupted?(error?.localizedDescription)
                     }
                 }
             }
         }
+    }
+
+    private func consumeCapturedTranscript() -> String {
+        defer {
+            finalText = ""
+            hasReceivedTranscriptInCurrentCapture = false
+        }
+        guard hasReceivedTranscriptInCurrentCapture else { return "" }
+        return polishBasic(finalText)
     }
 
     private func stopInternal() {
@@ -1419,20 +1438,23 @@ final class DictationController: NSObject {
             return false
         }
 
-        let raw = UnsafeMutableRawPointer.allocate(
-            byteCount: Int(dataSize),
-            alignment: MemoryLayout<AudioBufferList>.alignment
-        )
-        defer { raw.deallocate() }
-
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, raw) == noErr else {
+        guard dataSize > 0 else { return false }
+        var storage = Data(count: Int(dataSize))
+        let readStatus: OSStatus = storage.withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return kAudioHardwareUnspecifiedError }
+            return AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, baseAddress)
+        }
+        guard readStatus == noErr else {
             return false
         }
 
-        let listPointer = raw.assumingMemoryBound(to: AudioBufferList.self)
-        let buffers = UnsafeMutableAudioBufferListPointer(listPointer)
-        let channelCount = buffers.reduce(0) { partial, buffer in
-            partial + Int(buffer.mNumberChannels)
+        let channelCount: Int = storage.withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return 0 }
+            let listPointer = baseAddress.assumingMemoryBound(to: AudioBufferList.self)
+            let buffers = UnsafeMutableAudioBufferListPointer(listPointer)
+            return buffers.reduce(0) { partial, buffer in
+                partial + Int(buffer.mNumberChannels)
+            }
         }
         return channelCount > 0
     }

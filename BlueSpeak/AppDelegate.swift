@@ -6,6 +6,14 @@ import Combine
 import NaturalLanguage
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private final class QuickReplyEventTapContext {
+        weak var appDelegate: AppDelegate?
+
+        init(appDelegate: AppDelegate) {
+            self.appDelegate = appDelegate
+        }
+    }
+
     private enum MenuBarVisualState {
         case normal
         case warning
@@ -40,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var localKeyDownMonitor: Any?
     private var quickReplyKeyEventTap: CFMachPort?
     private var quickReplyKeyEventSource: CFRunLoopSource?
+    private var quickReplyKeyEventTapContext: Unmanaged<QuickReplyEventTapContext>?
 
     private var backendStatusItem: NSMenuItem?
     private var aiMenuItem: NSMenuItem?
@@ -71,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var isSavingQuickReplyContext: Bool = false
     private var isCapturingRewriteInstruction: Bool = false
     private var pendingRewriteTargetApp: NSRunningApplication?
+    private var lastRewriteInstructionPartial: String = ""
     private var quickReplyContextText: String = ""
     private var hasPendingQuickReplyContextRewrite: Bool = false
     private var lastQuickReplyCaptureAt: Date = .distantPast
@@ -82,8 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         configureDictationCallbacks()
 
-        // Be om Accessibility-tillatelse med dialog hvis ikke gitt
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        // Be om Accessibility-tillatelse med dialog hvis ikke gitt.
+        // Use CFBoolean to avoid unnecessary Swift bridging churn on launch.
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: kCFBooleanTrue] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(options)
         print("🔐 AX ved oppstart: \(trusted)")
 
@@ -147,6 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         teardownKeyboardMonitors()
     }
 
+    deinit {
+        teardownKeyboardMonitors()
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard isHomeWindow(sender) else { return true }
         sender.orderOut(nil)
@@ -202,7 +217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dictation.onPartial = { [weak self] text in
             guard let self else { return }
             DispatchQueue.main.async {
-                guard !self.isSelectionRewriteInProgress else { return }
+                if self.isSelectionRewriteInProgress {
+                    self.lastRewriteInstructionPartial = text
+                }
                 self.overlay.updatePartial(text)
             }
         }
@@ -340,11 +357,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let eventMask = (1 << CGEventType.keyDown.rawValue)
         let callback: CGEventTapCallBack = { proxy, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
-            let app = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
+            let context = Unmanaged<QuickReplyEventTapContext>.fromOpaque(refcon).takeUnretainedValue()
+            guard let app = context.appDelegate else {
+                return Unmanaged.passUnretained(event)
+            }
             return app.handleQuickReplyEventTap(proxy: proxy, type: type, event: event)
         }
 
-        let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        let contextRef = Unmanaged.passRetained(QuickReplyEventTapContext(appDelegate: self))
+        quickReplyKeyEventTapContext = contextRef
+        let refcon = UnsafeMutableRawPointer(contextRef.toOpaque())
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -353,13 +375,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             callback: callback,
             userInfo: refcon
         ) else {
-            AppLogStore.shared.record(.warning, "Quick reply suppression tap unavailable")
+            quickReplyKeyEventTapContext?.release()
+            quickReplyKeyEventTapContext = nil
+            AppLogStore.shared.record(.info, "Quick reply suppression tap unavailable; using monitor fallback")
             return
         }
 
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
             CFMachPortInvalidate(tap)
-            AppLogStore.shared.record(.warning, "Quick reply suppression source unavailable")
+            quickReplyKeyEventTapContext?.release()
+            quickReplyKeyEventTapContext = nil
+            AppLogStore.shared.record(.info, "Quick reply suppression source unavailable; using monitor fallback")
             return
         }
 
@@ -377,6 +403,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let tap = quickReplyKeyEventTap {
             CFMachPortInvalidate(tap)
             quickReplyKeyEventTap = nil
+        }
+        if let context = quickReplyKeyEventTapContext {
+            context.release()
+            quickReplyKeyEventTapContext = nil
         }
     }
 
@@ -832,9 +862,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         pendingRewriteTargetApp = NSWorkspace.shared.frontmostApplication
+        lastRewriteInstructionPartial = ""
         isSelectionRewriteInProgress = true
         isCapturingRewriteInstruction = true
         isPersistentCaptureLocked = false
+        AppLogStore.shared.record(.info, "Rewrite instruction capture started")
         overlay.setLocked(false)
         overlay.showListening(mode: .rewrite)
         dictation.start()
@@ -847,12 +879,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isPersistentCaptureLocked = false
         overlay.setLocked(false)
 
-        let instruction = dictation
+        var instruction = dictation
             .stopAndCaptureInstruction()
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        if instruction.isEmpty {
+            let fallback = lastRewriteInstructionPartial.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !fallback.isEmpty {
+                instruction = fallback
+                AppLogStore.shared.record(
+                    .info,
+                    "Rewrite instruction fallback used",
+                    metadata: ["chars": "\(fallback.count)"]
+                )
+            }
+        }
+        lastRewriteInstructionPartial = ""
         updateStatusIcon(isRecording: false)
+        AppLogStore.shared.record(
+            .info,
+            "Rewrite instruction captured",
+            metadata: ["chars": "\(instruction.count)"]
+        )
 
         guard !instruction.isEmpty else {
+            AppLogStore.shared.record(.warning, "Rewrite instruction capture failed", metadata: ["reason": "Empty instruction"])
+            presentRewriteError("No rewrite instruction captured. Hold \(settings.shortcutTriggerKey.rewriteShortcut), speak your instruction, then release.")
             pendingRewriteTargetApp = nil
             isSelectionRewriteInProgress = false
             overlay.hide()
