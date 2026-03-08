@@ -1443,12 +1443,18 @@ function isLikelyPersonNameToken(value) {
   if (!token) return false;
 
   const blacklist = new Set([
+    "hei", "hi", "hello", "dear", "kjære",
     "kan", "kunne", "du", "jeg", "vi", "dere", "har", "hadde", "ha", "vil", "ville",
     "kommer", "kommet", "kom", "gå", "drar", "dra", "i", "på", "til", "fra", "at", "om",
     "how", "can", "could", "would", "will", "are", "is", "do", "did"
   ]);
   if (blacklist.has(token)) return false;
   return /^[a-zæøå][a-zæøå'\-]{1,29}$/i.test(token);
+}
+
+function isGreetingWord(value) {
+  const token = String(value || "").trim().toLowerCase();
+  return token === "hei" || token === "hi" || token === "hello" || token === "dear" || token === "kjære";
 }
 
 const WEEKDAY_TOKEN_PATTERN = "(?:mandag|tirsdag|onsdag|torsdag|fredag|lørdag|laurdag|søndag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)";
@@ -1757,7 +1763,14 @@ function normalizeGreetingLine(line) {
   const match = trimmed.match(/^(Hei|Hi|Hello|Dear)\s+([A-Za-zÆØÅæøå][A-Za-zÆØÅæøå'\-]*(?:\s+[A-Za-zÆØÅæøå][A-Za-zÆØÅæøå'\-]*){0,3}),?$/i);
   if (!match) return null;
   const greeting = capitalizeFirstLetter(String(match[1] || "").toLowerCase());
-  const name = titleCaseWords(match[2] || "");
+  const rawName = String(match[2] || "").trim();
+  const nameTokens = rawName.split(/\s+/).filter(Boolean);
+  if (!nameTokens.length) return null;
+  const firstNameToken = nameTokens[0] || "";
+  if (isGreetingWord(firstNameToken) || firstNameToken.toLowerCase() === String(match[1] || "").toLowerCase()) {
+    return `${greeting},`;
+  }
+  const name = titleCaseWords(rawName);
   if (!name) return null;
   return `${greeting} ${name},`;
 }
@@ -1817,16 +1830,23 @@ function normalizeEmailBody(text) {
   if (!out) return out;
 
   out = out.replace(
+    /^(Hei|Hi|Hello|Dear)\s*,?\s*(Hei|Hi|Hello|Dear)\b\s*,?/i,
+    (_, g) => `${capitalizeFirstLetter(String(g || "").toLowerCase())},`
+  );
+
+  out = out.replace(
     /^(Hei|Hi|Hello)\s+([^\n,!?]+?)(?:,)?\s+(?=[^\n])/i,
     (full, g, name) => {
       const maybeName = String(name).trim();
       const firstToken = maybeName.split(/\s+/)[0] || "";
-      if (!isLikelyPersonNameToken(firstToken)) {
+      if (!isLikelyPersonNameToken(firstToken) || isGreetingWord(firstToken) || firstToken.toLowerCase() === String(g || "").toLowerCase()) {
         return String(full);
       }
       return `${g} ${maybeName},\n\n`;
     }
   );
+
+  out = out.replace(/^(Hei|Hi|Hello)\s+\1,?/i, (_, g) => `${g},`);
 
   out = out.replace(
     /\s+(Med vennlig hilsen|Vennlig hilsen|Hilsen|Mvh|Best regards|Regards|Best)\s*/i,
@@ -2739,7 +2759,7 @@ function buildPolishSystemPrompt({
     ? "If key details are missing or uncertain, keep them open-ended and avoid specific assumptions."
     : "";
   const recipientRule = mode === "email_body"
-    ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently."
+    ? "If multiple recipient names appear, keep the latest explicit recipient name and use it consistently. Never use greeting words like 'Hei/Hi/Hello/Dear' as recipient names, and never output duplicated greetings like 'Hei Hei,'."
     : "";
   const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. Convert spoken emoji words like 'smilefjes' to emoji only when those words are explicitly spoken. Never add emoji unless explicitly requested or already present in the input. Spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.'. Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
 

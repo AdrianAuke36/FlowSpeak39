@@ -944,6 +944,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if usesFocusedTextFallback { return focusedTextFallback }
             return copiedSelection
         }()
+        let contextIndicatesEmailReply = contextLooksLikeEmailReplyField(rewriteFieldContext) || textLooksLikeEmailThread(sourceText)
+        let forcedEmailModeForQuickReply = usesQuickReplyContext &&
+            (rewriteMode == nil || rewriteMode == .generic) &&
+            contextIndicatesEmailReply
+        let effectiveRewriteMode: DraftMode? = forcedEmailModeForQuickReply ? .emailBody : rewriteMode
+        if forcedEmailModeForQuickReply {
+            AppLogStore.shared.record(
+                .info,
+                "Rewrite forced email mode",
+                metadata: ["source": contextLooksLikeEmailReplyField(rewriteFieldContext) ? "field_context" : "saved_context"]
+            )
+        }
         let emailRecipientHint = usesQuickReplyContext
             ? resolvedEmailRecipientHint(
                 sourceText: sourceText,
@@ -976,7 +988,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 targetLanguageOverride: rewriteTargetLanguage,
                 replyMemories: replyMemories,
                 draftReplyFromContext: usesQuickReplyContext,
-                modeOverride: rewriteMode,
+                modeOverride: effectiveRewriteMode,
                 emailRecipientHint: emailRecipientHint
             )
             let rewritten = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1111,6 +1123,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return capitalizedWords == 1 ? cleaned : nil
         }
         return capitalizedWords >= 2 ? cleaned : nil
+    }
+
+    private func contextLooksLikeEmailReplyField(_ context: FieldContext?) -> Bool {
+        guard let context else { return false }
+
+        let bundle = context.bundleId.lowercased()
+        if bundle == "com.apple.mail" || bundle.contains("outlook") {
+            return true
+        }
+
+        let url = (context.browserURL ?? "").lowercased()
+        if url.contains("mail.google.com") || url.contains("outlook.live.com") || url.contains("outlook.office.com") {
+            return true
+        }
+
+        let blob = [
+            context.axDescription,
+            context.axHelp,
+            context.axTitle,
+            context.axPlaceholder
+        ]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
+        let hints = [
+            "e-post", "email", "compose", "new message", "reply", "svar",
+            "mottaker", "recipient", "subject", "emne", "message body",
+            "gmail", "outlook", "to", "cc", "bcc"
+        ]
+        return hints.contains { blob.contains($0) }
+    }
+
+    private func textLooksLikeEmailThread(_ text: String) -> Bool {
+        let raw = text.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return false }
+
+        let lower = raw.lowercased()
+        if lower.contains("med vennlig hilsen") || lower.contains("vennlig hilsen") || lower.contains("best regards") {
+            return true
+        }
+        if lower.range(of: #"\b(fra|from|til|to|emne|subject|cc|bcc)\s*:"#, options: .regularExpression) != nil {
+            return true
+        }
+        if lower.range(of: #"\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b"#, options: .regularExpression) != nil {
+            return true
+        }
+
+        let lines = raw
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return false }
+
+        if lines[0].range(of: #"^(re|sv|fw|fwd)\s*:"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return true
+        }
+        if lines[0].range(of: #"^(hei|hello|hi|dear|kjære)\b"#, options: [.regularExpression, .caseInsensitive]) != nil && lines.count >= 3 {
+            return true
+        }
+        if lines.prefix(6).contains(where: { $0.range(of: #"^"?[^"<]{2,120}"?\s*<[^>]+>$"#, options: .regularExpression) != nil }) {
+            return true
+        }
+        if lines.prefix(6).contains(where: { $0.range(of: #"^(til|to)\s+\S+"#, options: [.regularExpression, .caseInsensitive]) != nil }) {
+            return true
+        }
+
+        return false
     }
 
     private func presentRewriteError(_ message: String) {
