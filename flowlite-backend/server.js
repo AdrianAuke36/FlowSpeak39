@@ -3633,7 +3633,7 @@ async function handleRewrite(body, requestSignal) {
     const greetingRule = isEmailReplyMode && preferredGreetingName
       ? `Start the email with a natural direct greeting to the sender: "Hei ${preferredGreetingName}," unless the user explicitly asks for another style.`
       : isEmailReplyMode
-        ? "Start the email with a natural greeting when appropriate."
+        ? "Start the email with a natural greeting when appropriate. If recipient name is unknown, use a neutral greeting like 'Hei,' and never invent a recipient name."
         : "";
     const signoffRule = isEmailReplyMode
       ? (() => {

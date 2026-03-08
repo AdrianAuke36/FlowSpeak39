@@ -944,7 +944,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if usesFocusedTextFallback { return focusedTextFallback }
             return copiedSelection
         }()
-        let emailRecipientHint = usesQuickReplyContext ? rewriteFieldContext?.emailRecipientHint : nil
+        let emailRecipientHint = usesQuickReplyContext
+            ? resolvedEmailRecipientHint(
+                sourceText: sourceText,
+                fallbackHint: rewriteFieldContext?.emailRecipientHint
+            )
+            : nil
 
         guard !sourceText.isEmpty else {
             restorePasteboardSnapshot(snapshot)
@@ -1023,6 +1028,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         default:
             return dominant.rawValue
         }
+    }
+
+    private func resolvedEmailRecipientHint(sourceText: String, fallbackHint: String?) -> String? {
+        if let extracted = extractEmailReplySenderName(from: sourceText) {
+            return extracted
+        }
+        guard let fallbackHint else { return nil }
+        return sanitizeEmailRecipientCandidate(fallbackHint)
+    }
+
+    private func extractEmailReplySenderName(from text: String) -> String? {
+        let lines = text
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for line in lines.prefix(12) {
+            let compact = line
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let angleStart = compact.firstIndex(of: "<"),
+               compact.contains(">"),
+               angleStart > compact.startIndex {
+                let rawName = String(compact[..<angleStart])
+                if let sanitized = sanitizeEmailRecipientCandidate(rawName) {
+                    return sanitized
+                }
+            }
+
+            let lower = compact.lowercased()
+            if lower.hasPrefix("from:") || lower.hasPrefix("fra:") {
+                var rawName = compact
+                if let colonIndex = rawName.firstIndex(of: ":") {
+                    rawName = String(rawName[rawName.index(after: colonIndex)...])
+                }
+                if let angleStart = rawName.firstIndex(of: "<") {
+                    rawName = String(rawName[..<angleStart])
+                }
+                if let sanitized = sanitizeEmailRecipientCandidate(rawName) {
+                    return sanitized
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func sanitizeEmailRecipientCandidate(_ raw: String) -> String? {
+        let cleaned = raw
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"' ").union(.whitespacesAndNewlines))
+        guard !cleaned.isEmpty, cleaned.count <= 60 else { return nil }
+        guard cleaned.rangeOfCharacter(from: .decimalDigits) == nil else { return nil }
+
+        let lower = cleaned.lowercased()
+        let blockedTerms = [
+            "send", "sende", "subject", "emne", "mottaker", "recipient", "compose", "ny melding",
+            "new message", "sans serif", "flow", "bluespeak", "settings", "home", "continue",
+            "til", "cc", "bcc", "inbox", "innboks",
+            "bruk", "bruker", "bruk app i fokus", "use focused app", "focused app", "fokus", "focus"
+        ]
+        if blockedTerms.contains(where: { lower == $0 || lower.contains($0) }) {
+            return nil
+        }
+
+        let words = cleaned.split(separator: " ").map(String.init)
+        guard !words.isEmpty, words.count <= 4 else { return nil }
+
+        let lettersOnly = CharacterSet.letters.union(CharacterSet(charactersIn: "-'"))
+        guard words.allSatisfy({ !$0.isEmpty && $0.unicodeScalars.allSatisfy(lettersOnly.contains) }) else {
+            return nil
+        }
+
+        let capitalizedWords = words.filter { word in
+            guard let first = word.unicodeScalars.first else { return false }
+            return CharacterSet.uppercaseLetters.contains(first)
+        }.count
+
+        if words.count == 1 {
+            return capitalizedWords == 1 ? cleaned : nil
+        }
+        return capitalizedWords >= 2 ? cleaned : nil
     }
 
     private func presentRewriteError(_ message: String) {
