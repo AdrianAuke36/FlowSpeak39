@@ -19,28 +19,43 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
+    func title(using settings: AppSettings) -> String {
         switch self {
-        case .general: return "General"
-        case .account: return "Account"
-        case .privacy: return "Data & Privacy"
-        case .billing: return "Plans & Billing"
-        case .advanced: return "Advanced"
+        case .general: return settings.ui("Generelt", "General")
+        case .account: return settings.ui("Konto", "Account")
+        case .privacy: return settings.ui("Data og personvern", "Data & Privacy")
+        case .billing: return settings.ui("Planer og betaling", "Plans & Billing")
+        case .advanced: return settings.ui("Avansert", "Advanced")
         }
     }
 
-    var subtitle: String {
+    func subtitle(using settings: AppSettings) -> String {
         switch self {
         case .general:
-            return "Language, microphone and core dictation behavior."
+            return settings.ui(
+                "Appspråk, mikrofon og grunnleggende dikteringsvalg.",
+                "App language, microphone, and core dictation behavior."
+            )
         case .account:
-            return "Session status and sign-in account actions."
+            return settings.ui(
+                "Sesjonsstatus og handlinger for innlogget konto.",
+                "Session status and signed-in account actions."
+            )
         case .privacy:
-            return "What is stored, what is sent, and local data controls."
+            return settings.ui(
+                "Hva som lagres, hva som sendes, og lokale datakontroller.",
+                "What is stored, what is sent, and local data controls."
+            )
         case .billing:
-            return "Free usage progress and upgrade options."
+            return settings.ui(
+                "Forbruk i gratisplanen og oppgraderingsvalg.",
+                "Free usage progress and upgrade options."
+            )
         case .advanced:
-            return "Backend, auth setup, email rules, shortcuts and diagnostics."
+            return settings.ui(
+                "Backend, auth-oppsett, e-postregler, snarveier og diagnostikk.",
+                "Backend, auth setup, email rules, shortcuts, and diagnostics."
+            )
         }
     }
 
@@ -62,7 +77,7 @@ struct SettingsView: View {
 
     @State private var selectedSection: SettingsSection = .general
     @State private var isCapturingShortcut: Bool = false
-    @State private var shortcutCaptureStatus: String = "Press a supported key."
+    @State private var shortcutCaptureStatus: String = ""
     @State private var shortcutCaptureMonitor: Any?
     @State private var microphones: [MicrophoneOption] = MicrophoneCatalog.availableOptions()
     @State private var supabaseEmailInput: String = ""
@@ -77,17 +92,21 @@ struct SettingsView: View {
         _selectedSection = State(initialValue: initialSection)
     }
 
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
+
     var body: some View {
         HStack(spacing: 16) {
             sectionSidebar
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text(selectedSection.title)
+                    Text(selectedSection.title(using: settings))
                         .font(.system(size: 30, weight: .bold, design: .serif))
                         .foregroundStyle(AppTheme.primaryText)
 
-                    Text(selectedSection.subtitle)
+                    Text(selectedSection.subtitle(using: settings))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(AppTheme.secondaryText)
 
@@ -121,19 +140,22 @@ struct SettingsView: View {
         .onChange(of: settings.supabaseUserLastName) { _, nextValue in
             accountLastNameInput = nextValue
         }
-        .alert("Delete account permanently?", isPresented: $showDeleteAccountConfirmation) {
-            Button("Delete", role: .destructive) {
+        .alert(ui("Slette konto permanent?", "Delete account permanently?"), isPresented: $showDeleteAccountConfirmation) {
+            Button(ui("Slett", "Delete"), role: .destructive) {
                 deleteSupabaseAccount()
             }
-            Button("Cancel", role: .cancel) { }
+            Button(ui("Avbryt", "Cancel"), role: .cancel) { }
         } message: {
-            Text("This action removes your account and signs you out on this Mac.")
+            Text(ui(
+                "Denne handlingen sletter kontoen og logger deg ut på denne Mac-en.",
+                "This action removes the account and signs you out on this Mac."
+            ))
         }
     }
 
     private var sectionSidebar: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("SETTINGS")
+            Text(ui("INNSTILLINGER", "SETTINGS"))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(AppTheme.secondaryText)
                 .padding(.horizontal, 8)
@@ -161,7 +183,7 @@ struct SettingsView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 16)
 
-                Text(section.title)
+                Text(section.title(using: settings))
                     .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
 
                 Spacer(minLength: 0)
@@ -210,15 +232,24 @@ struct SettingsView: View {
     private var generalContent: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                settingRow(title: "Språk") {
+                settingRow(title: ui("Appspråk", "App language")) {
+                    Picker("", selection: $settings.interfaceLanguage) {
+                        ForEach(InterfaceLanguage.allCases) { language in
+                            Text(language.label).tag(language)
+                        }
+                    }
+                    .storePicker(maxWidth: 240)
+                }
+
+                settingRow(title: ui("Språk for diktering", "Input language")) {
                     languagePicker(selection: $settings.appLanguage, width: 240)
                 }
 
-                settingRow(title: "Translate") {
+                settingRow(title: ui("Oversett til", "Translate to")) {
                     languagePicker(selection: $settings.translationTargetLanguage, width: 240)
                 }
 
-                settingRow(title: "Forståelse") {
+                settingRow(title: ui("Forståelse", "Interpretation")) {
                     VStack(alignment: .leading, spacing: 8) {
                         interpretationLevelBar(selection: $settings.interpretationLevel)
 
@@ -228,7 +259,7 @@ struct SettingsView: View {
                     }
                 }
 
-                settingRow(title: "Mikrofon") {
+                settingRow(title: ui("Mikrofon", "Microphone")) {
                     HStack(spacing: 8) {
                         microphonePicker(selection: $settings.selectedMicrophoneUID, width: 420)
 
@@ -238,25 +269,25 @@ struct SettingsView: View {
                             Image(systemName: "arrow.clockwise")
                         }
                         .buttonStyle(.bordered)
-                        .help("Oppdater mikrofonliste")
+                        .help(ui("Oppdater mikrofonliste", "Refresh microphone list"))
                     }
                 }
 
-                settingRow(title: "Shortcuts") {
+                settingRow(title: ui("Snarveier", "Shortcuts")) {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(settings.shortcutTriggerKey.summary)
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(AppTheme.primaryText)
 
-                            Text("Administrer hurtigtaster i Advanced-seksjonen.")
+                            Text(ui("Administrer hurtigtaster i Avansert-seksjonen.", "Manage shortcut keys in Advanced."))
                                 .font(.system(size: 11))
                                 .foregroundStyle(AppTheme.secondaryText)
                         }
 
                         Spacer()
 
-                        Button("Open Advanced") {
+                        Button(ui("Åpne Avansert", "Open Advanced")) {
                             selectedSection = .advanced
                         }
                         .buttonStyle(.bordered)
@@ -273,7 +304,7 @@ struct SettingsView: View {
                 }
             }
         } label: {
-            Text("General")
+            Text(ui("Generelt", "General"))
                 .font(.system(size: 13, weight: .semibold))
         }
         .groupBoxStyle(StoreGroupBoxStyle())
@@ -283,49 +314,49 @@ struct SettingsView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 if settings.hasSupabaseSession {
-                    settingRow(title: "Logged in as") {
-                        readOnlyValue(settings.supabaseUserEmail.isEmpty ? "Unknown account" : settings.supabaseUserEmail)
+                    settingRow(title: ui("Innlogget som", "Logged in as")) {
+                        readOnlyValue(settings.supabaseUserEmail.isEmpty ? ui("Ukjent konto", "Unknown account") : settings.supabaseUserEmail)
                     }
 
-                    settingRow(title: "First name") {
-                        TextField("First name", text: $accountFirstNameInput)
+                    settingRow(title: ui("Fornavn", "First name")) {
+                        TextField(ui("Fornavn", "First name"), text: $accountFirstNameInput)
                             .textFieldStyle(.plain)
                             .storeField(maxWidth: 320)
                     }
 
-                    settingRow(title: "Last name") {
-                        TextField("Last name", text: $accountLastNameInput)
+                    settingRow(title: ui("Etternavn", "Last name")) {
+                        TextField(ui("Etternavn", "Last name"), text: $accountLastNameInput)
                             .textFieldStyle(.plain)
                             .storeField(maxWidth: 320)
                     }
 
                     HStack(spacing: 8) {
-                        Button("Save name") {
+                        Button(ui("Lagre navn", "Save name")) {
                             updateSupabaseName()
                         }
                         .buttonStyle(.bordered)
                         .disabled(supabaseAuthBusy)
 
-                        Button("Reset password") {
+                        Button(ui("Tilbakestill passord", "Reset password")) {
                             requestSupabasePasswordResetForCurrentAccount()
                         }
                         .buttonStyle(.bordered)
                         .disabled(supabaseAuthBusy)
 
-                        Button("Sign out") {
+                        Button(ui("Logg ut", "Sign out")) {
                             signOutSupabase()
                         }
                         .buttonStyle(.bordered)
                         .disabled(supabaseAuthBusy)
 
-                        Button("Delete account", role: .destructive) {
+                        Button(ui("Slett konto", "Delete account"), role: .destructive) {
                             showDeleteAccountConfirmation = true
                         }
                         .buttonStyle(.bordered)
                         .disabled(supabaseAuthBusy)
                     }
                 } else {
-                    Text("Not signed in. Use the login screen in the main window.")
+                    Text(ui("Ikke logget inn. Bruk innloggingsskjermen i hovedvinduet.", "Not signed in. Use the login screen in the main window."))
                         .font(.system(size: 12))
                         .foregroundStyle(AppTheme.secondaryText)
                 }
@@ -335,7 +366,7 @@ struct SettingsView: View {
                     .foregroundStyle(AppTheme.secondaryText)
             }
         } label: {
-            Text("Account")
+            Text(ui("Konto", "Account"))
                 .font(.system(size: 13, weight: .semibold))
         }
         .groupBoxStyle(StoreGroupBoxStyle())
@@ -346,50 +377,62 @@ struct SettingsView: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     privacyInfoRow(
-                        title: "Talegjenkjenning",
-                        detail: "BlueSpeak bruker Apples talegjenkjenning etter at du har gitt tillatelse. macOS kan sende taledata til Apple for å behandle forespørslene."
+                        title: ui("Talegjenkjenning", "Speech recognition"),
+                        detail: ui(
+                            "BlueSpeak bruker Apples talegjenkjenning etter at du har gitt tillatelse. macOS kan sende taledata til Apple for å behandle forespørslene.",
+                            "BlueSpeak uses Apple's speech recognition after permission is granted. macOS may send speech data to Apple to process requests."
+                        )
                     )
 
                     privacyInfoRow(
-                        title: "AI-behandling",
-                        detail: "Teksten du dikterer sendes til BlueSpeak-backenden. Hvis AI er aktiv, sender backenden tekst videre til OpenAI for formatering, oversettelse og rewrite."
+                        title: ui("AI-behandling", "AI processing"),
+                        detail: ui(
+                            "Teksten du dikterer sendes til BlueSpeak-backenden. Hvis AI er aktiv, sender backenden tekst videre til OpenAI for formatering, oversettelse og rewrite.",
+                            "Dictated text is sent to the BlueSpeak backend. If AI is active, the backend forwards text to OpenAI for formatting, translation, and rewrite."
+                        )
                     )
 
                     privacyInfoRow(
-                        title: "Lokalt lagret på denne Mac-en",
-                        detail: "Dikteringshistorikk, språk- og stilvalg, valgt mikrofon og aktiv innloggingsøkt lagres lokalt på denne maskinen."
+                        title: ui("Lokalt lagret på denne Mac-en", "Stored locally on this Mac"),
+                        detail: ui(
+                            "Dikteringshistorikk, språk- og stilvalg, valgt mikrofon og aktiv innloggingsøkt lagres lokalt på denne maskinen.",
+                            "Dictation history, language and style choices, selected microphone, and active sign-in session are stored locally on this Mac."
+                        )
                     )
 
                     privacyInfoRow(
-                        title: "Konto",
-                        detail: "Innlogging og sesjonsfornying håndteres via Supabase."
+                        title: ui("Konto", "Account"),
+                        detail: ui("Innlogging og sesjonsfornying håndteres via Supabase.", "Sign-in and session refresh are handled via Supabase.")
                     )
 
                     HStack(spacing: 8) {
-                        Button("Clear local history") {
+                        Button(ui("Tøm lokal historikk", "Clear local history")) {
                             history.clearAll()
                         }
                         .buttonStyle(.bordered)
 
-                        Button("Sign out and clear local session") {
+                        Button(ui("Logg ut og slett lokal økt", "Sign out and clear local session")) {
                             clearLocalPrivateData()
                         }
                         .buttonStyle(.bordered)
                     }
                 }
             } label: {
-                Text("Data & Privacy")
+                Text(ui("Data og personvern", "Data & Privacy"))
                     .font(.system(size: 13, weight: .semibold))
             }
             .groupBoxStyle(StoreGroupBoxStyle())
 
             GroupBox {
-                Text("Permissions: aktiver BlueSpeak i Privacy & Security → Accessibility + Input Monitoring.")
+                Text(ui(
+                    "Tillatelser: aktiver BlueSpeak i Personvern og sikkerhet → Tilgjengelighet + Input Monitoring.",
+                    "Permissions: enable BlueSpeak in Privacy & Security → Accessibility + Input Monitoring."
+                ))
                     .font(.system(size: 12))
                     .foregroundStyle(AppTheme.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } label: {
-                Text("Permissions")
+                Text(ui("Tillatelser", "Permissions"))
                     .font(.system(size: 13, weight: .semibold))
             }
             .groupBoxStyle(StoreGroupBoxStyle())
@@ -400,7 +443,7 @@ struct SettingsView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Current plan")
+                    Text(ui("Nåværende plan", "Current plan"))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(AppTheme.primaryText)
 
@@ -412,7 +455,10 @@ struct SettingsView: View {
                 }
 
                 if subscriptionPlan == .free {
-                    Text("Free includes \(Self.freeDailyWordLimit) words per day.")
+                    Text(ui(
+                        "Gratis inkluderer \(Self.freeDailyWordLimit) ord per dag.",
+                        "Free includes \(Self.freeDailyWordLimit) words per day."
+                    ))
                         .font(.system(size: 12))
                         .foregroundStyle(AppTheme.secondaryText)
 
@@ -421,7 +467,10 @@ struct SettingsView: View {
                         .tint(AppTheme.warning)
 
                     HStack {
-                        Text("\(displayedWordsUsedToday)/\(Self.freeDailyWordLimit) words today")
+                        Text(ui(
+                            "\(displayedWordsUsedToday)/\(Self.freeDailyWordLimit) ord i dag",
+                            "\(displayedWordsUsedToday)/\(Self.freeDailyWordLimit) words today"
+                        ))
                             .font(.system(size: 12))
                             .foregroundStyle(AppTheme.secondaryText)
 
@@ -432,19 +481,22 @@ struct SettingsView: View {
                             .foregroundStyle(AppTheme.primaryText)
                     }
 
-                    Button("Upgrade to Pro") {
+                    Button(ui("Oppgrader til Pro", "Upgrade to Pro")) {
                         openUpgradePage()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(AppTheme.accent)
                 } else {
-                    Text("You are on a paid plan. Unlimited usage is active.")
+                    Text(ui(
+                        "Du er på en betalt plan. Ubegrenset bruk er aktiv.",
+                        "You are on a paid plan. Unlimited usage is active."
+                    ))
                         .font(.system(size: 12))
                         .foregroundStyle(AppTheme.secondaryText)
                 }
             }
         } label: {
-            Text("Plans & Billing")
+            Text(ui("Planer og betaling", "Plans & Billing"))
                 .font(.system(size: 13, weight: .semibold))
         }
         .groupBoxStyle(StoreGroupBoxStyle())
@@ -454,107 +506,134 @@ struct SettingsView: View {
         VStack(spacing: 16) {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    settingRow(title: "Default innsettingsmodus") {
+                    settingRow(title: ui("Standard innsettingsmodus", "Default insertion mode")) {
                         modePicker(selection: $settings.globalMode, width: 360)
                     }
 
-                    settingRow(title: "Backend URL") {
+                    settingRow(title: ui("STT-leverandør", "Speech provider")) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            sttProviderPicker(selection: $settings.sttProvider, width: 360)
+
+                            Text(settings.sttProvider.summary)
+                                .font(.system(size: 11))
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+
+                    if settings.sttProvider == .groqWhisperLargeV3 {
+                        settingRow(title: ui("Groq API-nøkkel", "Groq API key")) {
+                            HStack(spacing: 8) {
+                                SecureField("gsk_...", text: $settings.groqAPIKey)
+                                    .textFieldStyle(.plain)
+                                    .storeField(maxWidth: 560)
+
+                                if !settings.groqAPIKey.isEmpty {
+                                    Button(ui("Tøm", "Clear")) {
+                                        settings.groqAPIKey = ""
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            }
+                        }
+                    }
+
+                    settingRow(title: ui("Backend-URL", "Backend URL")) {
                         TextField(AppSettings.defaultBackendBaseURL, text: $settings.backendBaseURL)
                             .textFieldStyle(.plain)
                             .storeField(maxWidth: 560)
                     }
 
-                    settingRow(title: "Backend token/JWT") {
+                    settingRow(title: ui("Backend-token/JWT", "Backend token/JWT")) {
                         HStack(spacing: 8) {
-                            SecureField("Bearer token or JWT", text: $settings.backendToken)
+                            SecureField(ui("Bearer-token eller JWT", "Bearer token or JWT"), text: $settings.backendToken)
                                 .textFieldStyle(.plain)
                                 .storeField(maxWidth: 560)
 
                             if !settings.backendToken.isEmpty {
-                                Button("Copy") {
+                                Button(ui("Kopier", "Copy")) {
                                     copyBackendToken()
                                 }
                                 .buttonStyle(.bordered)
 
-                                Button("Clear") {
+                                Button(ui("Tøm", "Clear")) {
                                     settings.backendToken = ""
                                 }
                                 .buttonStyle(.bordered)
                             }
                         }
                     }
-                }
-            } label: {
-                Text("Backend")
+            }
+        } label: {
+                Text(ui("Backend", "Backend"))
                     .font(.system(size: 13, weight: .semibold))
             }
             .groupBoxStyle(StoreGroupBoxStyle())
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    settingRow(title: "Supabase URL") {
+                    settingRow(title: ui("Supabase-URL", "Supabase URL")) {
                         TextField("https://<project-ref>.supabase.co", text: $settings.supabaseProjectURL)
                             .textFieldStyle(.plain)
                             .storeField(maxWidth: 560)
                     }
 
-                    settingRow(title: "Supabase anon key") {
+                    settingRow(title: ui("Supabase anon-nøkkel", "Supabase anon key")) {
                         SecureField("eyJ...", text: $settings.supabaseAnonKey)
                             .textFieldStyle(.plain)
                             .storeField(maxWidth: 560)
                     }
 
                     if settings.hasSupabaseSession {
-                        settingRow(title: "Current account") {
-                            readOnlyValue(settings.supabaseUserEmail.isEmpty ? "Unknown account" : settings.supabaseUserEmail)
+                    settingRow(title: ui("Aktiv konto", "Current account")) {
+                            readOnlyValue(settings.supabaseUserEmail.isEmpty ? ui("Ukjent konto", "Unknown account") : settings.supabaseUserEmail)
                         }
 
                         HStack(spacing: 8) {
-                            Button("Refresh JWT") {
+                            Button(ui("Oppdater JWT", "Refresh JWT")) {
                                 refreshSupabaseJWT()
                             }
                             .buttonStyle(.bordered)
                             .disabled(supabaseAuthBusy)
 
-                            Button("Sign out") {
+                            Button(ui("Logg ut", "Sign out")) {
                                 signOutSupabase()
                             }
                             .buttonStyle(.bordered)
                             .disabled(supabaseAuthBusy)
 
-                            Button("Switch account") {
+                            Button(ui("Bytt konto", "Switch account")) {
                                 switchAccountSupabase()
                             }
                             .buttonStyle(.bordered)
                             .disabled(supabaseAuthBusy)
                         }
                     } else {
-                        settingRow(title: "Email") {
-                            TextField("you@example.com", text: $supabaseEmailInput)
+                        settingRow(title: ui("E-post", "Email")) {
+                            TextField(ui("du@eksempel.no", "you@example.com"), text: $supabaseEmailInput)
                                 .textFieldStyle(.plain)
                                 .storeField(maxWidth: 560)
                         }
 
-                        settingRow(title: "Password") {
-                            SecureField("Password", text: $supabasePasswordInput)
+                        settingRow(title: ui("Passord", "Password")) {
+                            SecureField(ui("Passord", "Password"), text: $supabasePasswordInput)
                                 .textFieldStyle(.plain)
                                 .storeField(maxWidth: 560)
                         }
 
                         HStack(spacing: 8) {
-                            Button("Sign in (Supabase JWT)") {
+                            Button(ui("Logg inn (Supabase JWT)", "Sign in (Supabase JWT)")) {
                                 signInSupabase()
                             }
                             .buttonStyle(.bordered)
                             .disabled(supabaseAuthBusy)
 
-                            Button("Create account") {
+                            Button(ui("Opprett konto", "Create account")) {
                                 signUpSupabase()
                             }
                             .buttonStyle(.bordered)
                             .disabled(supabaseAuthBusy)
 
-                            Button("Reset password") {
+                            Button(ui("Tilbakestill passord", "Reset password")) {
                                 requestSupabasePasswordReset()
                             }
                             .buttonStyle(.bordered)
@@ -565,17 +644,17 @@ struct SettingsView: View {
                     Text(supabaseStatusText)
                         .font(.system(size: 12))
                         .foregroundStyle(AppTheme.secondaryText)
-                }
-            } label: {
-                Text("Auth setup")
+            }
+        } label: {
+                Text(ui("Auth-oppsett", "Auth setup"))
                     .font(.system(size: 13, weight: .semibold))
             }
             .groupBoxStyle(StoreGroupBoxStyle())
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    settingRow(title: "Tiltale") {
-                        Picker("Tiltale", selection: $settings.emailReplyGreetingMode) {
+                    settingRow(title: ui("Tiltale", "Greeting")) {
+                        Picker(ui("Tiltale", "Greeting"), selection: $settings.emailReplyGreetingMode) {
                             ForEach(EmailReplyGreetingMode.allCases) { option in
                                 Text(option.label).tag(option)
                             }
@@ -583,9 +662,9 @@ struct SettingsView: View {
                         .storePicker(maxWidth: 300)
                     }
 
-                    settingRow(title: "Avslutning") {
+                    settingRow(title: ui("Avslutning", "Sign-off")) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Picker("Avslutning", selection: $settings.emailReplySignoffMode) {
+                            Picker(ui("Avslutning", "Sign-off"), selection: $settings.emailReplySignoffMode) {
                                 ForEach(EmailReplySignoffMode.allCases) { option in
                                     Text(option.label).tag(option)
                                 }
@@ -593,7 +672,11 @@ struct SettingsView: View {
                             .storePicker(maxWidth: 300)
 
                             if settings.emailReplySignoffMode == .custom {
-                                TextField("Lim inn signaturen du vil bruke i e-postsvar", text: $settings.emailReplyCustomSignature, axis: .vertical)
+                                TextField(
+                                    ui("Lim inn signaturen du vil bruke i e-postsvar", "Paste the signature you want in email replies"),
+                                    text: $settings.emailReplyCustomSignature,
+                                    axis: .vertical
+                                )
                                     .textFieldStyle(.plain)
                                     .storeField(maxWidth: 560)
                             } else if settings.emailReplySignoffMode == .autoName {
@@ -613,21 +696,21 @@ struct SettingsView: View {
                             }
                         }
                     }
-                }
-            } label: {
-                Text("Mail")
+            }
+        } label: {
+                Text(ui("E-post", "Mail"))
                     .font(.system(size: 13, weight: .semibold))
             }
             .groupBoxStyle(StoreGroupBoxStyle())
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    settingRow(title: "Current shortcut") {
+                    settingRow(title: ui("Aktiv snarvei", "Current shortcut")) {
                         readOnlyValue(settings.shortcutTriggerKey.summary)
                     }
 
                     HStack(spacing: 8) {
-                        Button(isCapturingShortcut ? "Listening…" : "Rebind") {
+                        Button(isCapturingShortcut ? ui("Lytter…", "Listening…") : ui("Endre", "Rebind")) {
                             startShortcutCapture()
                         }
                         .buttonStyle(.borderedProminent)
@@ -635,7 +718,7 @@ struct SettingsView: View {
                         .disabled(isCapturingShortcut)
 
                         if isCapturingShortcut {
-                            Button("Cancel") {
+                            Button(ui("Avbryt", "Cancel")) {
                                 stopShortcutCapture()
                             }
                             .buttonStyle(.bordered)
@@ -644,19 +727,22 @@ struct SettingsView: View {
                         Spacer()
                     }
 
-                    Text(isCapturingShortcut ? shortcutCaptureStatus : "Trykk Fn, Left Option, Right Option, Left Command eller Right Command.")
+                    Text(isCapturingShortcut ? shortcutCaptureStatus : ui(
+                        "Trykk Fn, venstre Option, høyre Option, venstre Command eller høyre Command.",
+                        "Press Fn, Left Option, Right Option, Left Command, or Right Command."
+                    ))
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
 
-                    Picker("Preset", selection: $settings.shortcutTriggerKey) {
+                    Picker(ui("Forvalg", "Preset"), selection: $settings.shortcutTriggerKey) {
                         ForEach(ShortcutTriggerKey.allCases) { option in
                             Text(option.label).tag(option)
                         }
                     }
                     .storePicker(maxWidth: 320)
-                }
-            } label: {
-                Text("Shortcuts")
+            }
+        } label: {
+                Text(ui("Snarveier", "Shortcuts"))
                     .font(.system(size: 13, weight: .semibold))
             }
             .groupBoxStyle(StoreGroupBoxStyle())
@@ -664,7 +750,7 @@ struct SettingsView: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text("Maks lagrede diktater")
+                        Text(ui("Maks lagrede diktater", "Max saved dictations"))
                         Spacer()
                         Stepper(
                             value: historyMaxEntriesBinding,
@@ -678,49 +764,52 @@ struct SettingsView: View {
                     }
 
                     HStack {
-                        Text("Lagringer nå: \(history.entries.count)")
+                        Text(ui("Lagringer nå: \(history.entries.count)", "Saved now: \(history.entries.count)"))
                             .font(.system(size: 12))
                             .foregroundStyle(AppTheme.secondaryText)
                         Spacer()
-                        Button("Tøm historikk") {
+                        Button(ui("Tøm historikk", "Clear history")) {
                             history.clearAll()
                         }
                         .buttonStyle(.bordered)
                     }
-                }
-            } label: {
-                Text("History")
+            }
+        } label: {
+                Text(ui("Historikk", "History"))
                     .font(.system(size: 13, weight: .semibold))
             }
             .groupBoxStyle(StoreGroupBoxStyle())
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Klientloggen lagrer lokale auth-, permission- og AI-feil, slik at testere kan sende deg noe konkret når appen stopper.")
+                    Text(ui(
+                        "Klientloggen lagrer lokale auth-, tillatelses- og AI-feil, slik at testere kan sende deg konkret feilsøkingsinfo.",
+                        "Client logs store local auth, permission, and AI failures so testers can share concrete diagnostics."
+                    ))
                         .font(.system(size: 12))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
                     HStack(spacing: 8) {
-                        Text("Hendelser: \(appLog.entryCount)")
+                        Text(ui("Hendelser: \(appLog.entryCount)", "Events: \(appLog.entryCount)"))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(AppTheme.primaryText)
 
                         Spacer()
 
-                        Button("Copy debug log") {
+                        Button(ui("Kopier debug-logg", "Copy debug log")) {
                             copyDebugLog()
                         }
                         .buttonStyle(.bordered)
                         .disabled(appLog.entryCount == 0)
 
-                        Button("Save debug log…") {
+                        Button(ui("Lagre debug-logg…", "Save debug log…")) {
                             saveDebugLog()
                         }
                         .buttonStyle(.bordered)
                         .disabled(appLog.entryCount == 0)
 
-                        Button("Clear debug log") {
+                        Button(ui("Tøm debug-logg", "Clear debug log")) {
                             appLog.clear()
                         }
                         .buttonStyle(.bordered)
@@ -743,9 +832,9 @@ struct SettingsView: View {
                                     )
                             )
                     }
-                }
-            } label: {
-                Text("Diagnostics")
+            }
+        } label: {
+                Text(ui("Diagnostikk", "Diagnostics"))
                     .font(.system(size: 13, weight: .semibold))
             }
             .groupBoxStyle(StoreGroupBoxStyle())
@@ -773,7 +862,7 @@ struct SettingsView: View {
     }
 
     private func interpretationLevelBar(selection: Binding<InterpretationLevel>) -> some View {
-        Picker("Forståelse", selection: selection) {
+        Picker(ui("Forståelse", "Interpretation"), selection: selection) {
             ForEach(InterpretationLevel.allCases) { level in
                 Text(level.label).tag(level)
             }
@@ -787,6 +876,15 @@ struct SettingsView: View {
         Picker("", selection: selection) {
             ForEach(InsertionMode.allCases) { mode in
                 Text(mode.label).tag(mode)
+            }
+        }
+        .storePicker(maxWidth: width)
+    }
+
+    private func sttProviderPicker(selection: Binding<STTProvider>, width: CGFloat = 320) -> some View {
+        Picker("", selection: selection) {
+            ForEach(STTProvider.allCases) { provider in
+                Text(provider.label).tag(provider)
             }
         }
         .storePicker(maxWidth: width)
@@ -853,7 +951,10 @@ struct SettingsView: View {
         do {
             try text.write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            supabaseAuthStatus = "Could not save debug log. \(error.localizedDescription)"
+            supabaseAuthStatus = ui(
+                "Kunne ikke lagre debug-logg. \(error.localizedDescription)",
+                "Could not save debug log. \(error.localizedDescription)"
+            )
             AppLogStore.shared.record(.error, "Debug log save failed", metadata: ["error": error.localizedDescription])
         }
     }
@@ -878,29 +979,29 @@ struct SettingsView: View {
             return supabaseAuthStatus
         }
         guard settings.hasSupabaseSession else {
-            return "No Supabase session. Sign in to use per-user JWT."
+            return ui("Ingen Supabase-økt. Logg inn for å bruke per-bruker JWT.", "No Supabase session. Sign in to use per-user JWT.")
         }
         if let expiry = settings.supabaseSessionExpiresAt {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .short
             let remaining = formatter.localizedString(for: expiry, relativeTo: Date())
-            return "Supabase session active (\(remaining))."
+            return ui("Supabase-økt aktiv (\(remaining)).", "Supabase session active (\(remaining)).")
         }
-        return "Supabase session active."
+        return ui("Supabase-økt aktiv.", "Supabase session active.")
     }
 
     private func signInSupabase() {
-        performSupabaseAuth(starting: "Signing in...") {
+        performSupabaseAuth(starting: ui("Logger inn...", "Signing in...")) {
             try await settings.signInSupabase(
                 email: supabaseEmailInput,
                 password: supabasePasswordInput
             )
-            return "Signed in. JWT is active for backend requests."
+            return ui("Logget inn. JWT er aktiv for backend-kall.", "Signed in. JWT is active for backend requests.")
         }
     }
 
     private func signUpSupabase() {
-        performSupabaseAuth(starting: "Creating account...") {
+        performSupabaseAuth(starting: ui("Oppretter konto...", "Creating account...")) {
             let result = try await settings.signUpSupabase(
                 email: supabaseEmailInput,
                 password: supabasePasswordInput
@@ -908,80 +1009,89 @@ struct SettingsView: View {
 
             switch result {
             case .signedIn:
-                return "Account created. JWT is active for backend requests."
+                return ui("Konto opprettet. JWT er aktiv for backend-kall.", "Account created. JWT is active for backend requests.")
             case .confirmationRequired:
-                return "Account created. Check your email, then sign in."
+                return ui("Konto opprettet. Sjekk e-post og logg inn.", "Account created. Check your email, then sign in.")
             }
         }
     }
 
     private func refreshSupabaseJWT() {
         supabaseAuthBusy = true
-        supabaseAuthStatus = "Refreshing session..."
+        supabaseAuthStatus = ui("Oppdaterer økt...", "Refreshing session...")
         Task {
             defer { supabaseAuthBusy = false }
             let refreshed = await settings.refreshSupabaseSessionIfNeeded(force: true)
             supabaseAuthStatus = refreshed
-                ? "Session refreshed."
-                : "Refresh failed. Sign in again."
+                ? ui("Økt oppdatert.", "Session refreshed.")
+                : ui("Oppdatering feilet. Logg inn på nytt.", "Refresh failed. Sign in again.")
         }
     }
 
     private func signOutSupabase() {
         settings.signOutSupabaseSession()
         supabasePasswordInput = ""
-        supabaseAuthStatus = "Signed out."
+        supabaseAuthStatus = ui("Logget ut.", "Signed out.")
     }
 
     private func switchAccountSupabase() {
         settings.signOutSupabaseSession(clearRememberedEmail: true)
         supabaseEmailInput = ""
         supabasePasswordInput = ""
-        supabaseAuthStatus = "Signed out. Enter another email to switch accounts."
+        supabaseAuthStatus = ui(
+            "Logget ut. Skriv inn en annen e-post for å bytte konto.",
+            "Signed out. Enter another email to switch accounts."
+        )
     }
 
     private func updateSupabaseName() {
-        performSupabaseAuth(starting: "Saving name...") {
+        performSupabaseAuth(starting: ui("Lagrer navn...", "Saving name...")) {
             try await settings.updateSupabaseProfile(
                 firstName: accountFirstNameInput,
                 lastName: accountLastNameInput
             )
-            return "Name updated."
+            return ui("Navn oppdatert.", "Name updated.")
         }
     }
 
     private func requestSupabasePasswordResetForCurrentAccount() {
-        performSupabaseAuth(starting: "Sending reset email...") {
+        performSupabaseAuth(starting: ui("Sender e-post for passordreset...", "Sending reset email...")) {
             let email = settings.supabaseUserEmail.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !email.isEmpty else {
-                return "No account email available."
+                return ui("Ingen konto-e-post tilgjengelig.", "No account email available.")
             }
             try await settings.requestSupabasePasswordReset(email: email)
-            return "If the account exists, a reset email has been sent to \(email)."
+            return ui(
+                "Hvis kontoen finnes, er e-post for passordreset sendt til \(email).",
+                "If the account exists, a reset email has been sent to \(email)."
+            )
         }
     }
 
     private func deleteSupabaseAccount() {
-        performSupabaseAuth(starting: "Deleting account...") {
+        performSupabaseAuth(starting: ui("Sletter konto...", "Deleting account...")) {
             try await settings.deleteSupabaseAccount()
             supabaseEmailInput = ""
             accountFirstNameInput = ""
             accountLastNameInput = ""
-            return "Account deleted."
+            return ui("Konto slettet.", "Account deleted.")
         }
     }
 
     private func requestSupabasePasswordReset() {
         let email = supabaseEmailInput
         supabaseAuthBusy = true
-        supabaseAuthStatus = "Sending reset email..."
+        supabaseAuthStatus = ui("Sender e-post for passordreset...", "Sending reset email...")
 
         Task {
             defer { supabaseAuthBusy = false }
 
             do {
                 try await settings.requestSupabasePasswordReset(email: email)
-                supabaseAuthStatus = "If the account exists, a password reset email has been sent."
+                supabaseAuthStatus = ui(
+                    "Hvis kontoen finnes, er e-post for passordreset sendt.",
+                    "If the account exists, a password reset email has been sent."
+                )
             } catch {
                 supabaseAuthStatus = error.localizedDescription
             }
@@ -1002,19 +1112,22 @@ struct SettingsView: View {
         settings.signOutSupabaseSession(clearRememberedEmail: true)
         supabaseEmailInput = ""
         supabasePasswordInput = ""
-        supabaseAuthStatus = "Local history and session removed from this Mac."
+        supabaseAuthStatus = ui(
+            "Lokal historikk og økt er fjernet fra denne Mac-en.",
+            "Local history and session removed from this Mac."
+        )
     }
 
     private func startShortcutCapture() {
         stopShortcutCapture()
         settings.isShortcutCaptureActive = true
         isCapturingShortcut = true
-        shortcutCaptureStatus = "Waiting for key…"
+        shortcutCaptureStatus = ui("Venter på tast…", "Waiting for key…")
 
         shortcutCaptureMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             if let key = shortcutKey(from: event) {
                 settings.shortcutTriggerKey = key
-                shortcutCaptureStatus = "Set to \(key.label)."
+                shortcutCaptureStatus = ui("Satt til \(key.label).", "Set to \(key.label).")
                 stopShortcutCapture()
             }
             return event
@@ -1089,7 +1202,7 @@ struct SettingsView: View {
     }
 
     private var currentPlanLabel: String {
-        subscriptionPlan == .free ? "Free" : "Pro"
+        subscriptionPlan == .free ? ui("Gratis", "Free") : "Pro"
     }
 
     private var normalizedPlanClaim: String {
@@ -1115,8 +1228,8 @@ struct SettingsView: View {
 
     private var wordsLeftLabel: String {
         freeWordsRemaining == 0
-            ? "0 left today"
-            : "\(freeWordsRemaining) left today"
+            ? ui("0 igjen i dag", "0 left today")
+            : ui("\(freeWordsRemaining) igjen i dag", "\(freeWordsRemaining) left today")
     }
 
     private func openUpgradePage() {

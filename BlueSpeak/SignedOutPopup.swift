@@ -10,10 +10,15 @@ import SwiftUI
 // }
 
 struct SignedOutPopup: View {
+    @ObservedObject private var settings = AppSettings.shared
     @Binding var isVisible: Bool
 
     @State private var opacity: Double = 0
     @State private var offsetY: CGFloat = 10
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
 
     var body: some View {
         VStack {
@@ -23,7 +28,7 @@ struct SignedOutPopup: View {
                 // Header row
                 HStack {
                     Spacer()
-                    Text("Signed out")
+                    Text(ui("Logget ut", "Signed out"))
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.88))
                     Spacer()
@@ -37,7 +42,7 @@ struct SignedOutPopup: View {
                 .padding(.bottom, 6)
 
                 // Body
-                Text("Your session expired. Sign in to continue.")
+                Text(ui("Økten din utløp. Logg inn for å fortsette.", "Your session expired. Sign in to continue."))
                     .font(.system(size: 12))
                     .foregroundStyle(Color.white.opacity(0.38))
                     .multilineTextAlignment(.center)
@@ -46,7 +51,7 @@ struct SignedOutPopup: View {
 
                 // Button
                 Button(action: dismiss) {
-                    Text("Sign in again")
+                    Text(ui("Logg inn igjen", "Sign in again"))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.75))
                         .frame(maxWidth: .infinity)

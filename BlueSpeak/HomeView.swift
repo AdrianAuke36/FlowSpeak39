@@ -24,9 +24,12 @@ struct HomeView: View {
 
         var title: String {
             switch self {
-            case .home: return "Home"
-            case .history: return "History"
-            case .settings: return "Settings"
+            case .home:
+                return AppSettings.shared.ui("Hjem", "Home")
+            case .history:
+                return AppSettings.shared.ui("Historikk", "History")
+            case .settings:
+                return AppSettings.shared.ui("Innstillinger", "Settings")
             }
         }
 
@@ -184,7 +187,7 @@ struct HomeView: View {
             return fallback
         }
 
-        return "BlueSpeak user"
+        return settings.ui("BlueSpeak-bruker", "BlueSpeak user")
     }
 
     private func openAccountSettings() {
@@ -200,10 +203,15 @@ struct HomeView: View {
 }
 
 private struct AccountMenuPopover: View {
+    @ObservedObject private var settings = AppSettings.shared
     let displayName: String
     let email: String
     let onUpgrade: () -> Void
     let onManageAccount: () -> Void
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -223,7 +231,7 @@ private struct AccountMenuPopover: View {
                         .foregroundStyle(AppTheme.primaryText)
                         .lineLimit(1)
 
-                    Text(email.isEmpty ? "No email" : email)
+                    Text(email.isEmpty ? ui("Ingen e-post", "No email") : email)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(AppTheme.secondaryText)
                         .lineLimit(1)
@@ -234,18 +242,18 @@ private struct AccountMenuPopover: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("You are on BlueSpeak Basic")
+                Text(ui("Du er på BlueSpeak Free", "You are on BlueSpeak Free"))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AppTheme.primaryText)
 
                 HStack(spacing: 10) {
-                    Button("Upgrade") {
+                    Button(ui("Oppgrader", "Upgrade")) {
                         onUpgrade()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(AppTheme.accent)
 
-                    Button("Manage account") {
+                    Button(ui("Administrer konto", "Manage account")) {
                         onManageAccount()
                     }
                     .buttonStyle(.bordered)
@@ -273,12 +281,17 @@ private struct AccountMenuPopover: View {
 }
 
 private struct UpgradePlansModal: View {
+    @ObservedObject private var settings = AppSettings.shared
     @Binding var isPresented: Bool
     @State private var billingCycle: BillingCycle = .annual
 
     private enum BillingCycle: String {
         case monthly
         case annual
+    }
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
     }
 
     var body: some View {
@@ -289,7 +302,7 @@ private struct UpgradePlansModal: View {
 
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .center, spacing: 12) {
-                    Text("Plans and Billing")
+                    Text(ui("Planer og betaling", "Plans and Billing"))
                         .font(.system(size: 44, weight: .bold, design: .serif))
                         .foregroundStyle(AppTheme.primaryText)
 
@@ -320,15 +333,15 @@ private struct UpgradePlansModal: View {
 
                 HStack(spacing: 0) {
                     planCard(
-                        subtitle: "For individuals",
+                        subtitle: ui("For enkeltpersoner", "For individuals"),
                         title: "Basic",
-                        price: "Free",
+                        price: ui("Gratis", "Free"),
                         badge: nil,
                         features: [
-                            "3,000 words per day",
-                            "Dictation, translate and rewrite",
-                            "Works across all apps",
-                            "Standard support"
+                            ui("3 000 ord per dag", "3,000 words per day"),
+                            ui("Diktering, oversettelse og rewrite", "Dictation, translate and rewrite"),
+                            ui("Fungerer i alle apper", "Works across all apps"),
+                            ui("Standard kundestøtte", "Standard support")
                         ],
                         actionTitle: nil,
                         action: nil,
@@ -338,18 +351,20 @@ private struct UpgradePlansModal: View {
                     Divider()
 
                     planCard(
-                        subtitle: "For individuals and teams",
+                        subtitle: ui("For enkeltpersoner og team", "For individuals and teams"),
                         title: "Pro",
-                        price: billingCycle == .annual ? "12 USD per user/mo" : "15 USD per user/mo",
+                        price: billingCycle == .annual
+                            ? ui("12 USD per bruker/mnd", "12 USD per user/mo")
+                            : ui("15 USD per bruker/mnd", "15 USD per user/mo"),
                         badge: billingCycle == .annual ? "-20%" : nil,
                         features: [
-                            "Everything in Basic",
-                            "Unlimited words on all devices",
-                            "Priority support",
-                            "Early feature access",
-                            "Advanced reply + rewrite controls"
+                            ui("Alt i Basic", "Everything in Basic"),
+                            ui("Ubegrenset ord på alle enheter", "Unlimited words on all devices"),
+                            ui("Prioritert support", "Priority support"),
+                            ui("Tidlig tilgang til nye funksjoner", "Early feature access"),
+                            ui("Avansert svar- og rewrite-kontroll", "Advanced reply + rewrite controls")
                         ],
-                        actionTitle: "Upgrade to Pro",
+                        actionTitle: ui("Oppgrader til Pro", "Upgrade to Pro"),
                         action: openUpgradePage,
                         emphasized: true
                     )
@@ -357,18 +372,20 @@ private struct UpgradePlansModal: View {
                     Divider()
 
                     planCard(
-                        subtitle: "For teams with advanced needs",
+                        subtitle: ui("For team med avanserte behov", "For teams with advanced needs"),
                         title: "Enterprise",
-                        price: billingCycle == .annual ? "24 USD per user/mo" : "30 USD per user/mo",
+                        price: billingCycle == .annual
+                            ? ui("24 USD per bruker/mnd", "24 USD per user/mo")
+                            : ui("30 USD per bruker/mnd", "30 USD per user/mo"),
                         badge: nil,
                         features: [
-                            "Everything in Pro",
+                            ui("Alt i Pro", "Everything in Pro"),
                             "SSO / SAML",
-                            "Usage dashboards",
-                            "Dedicated onboarding",
-                            "Priority SLA support"
+                            ui("Bruksdashbord", "Usage dashboards"),
+                            ui("Dedikert onboarding", "Dedicated onboarding"),
+                            ui("Prioritert SLA-support", "Priority SLA support")
                         ],
-                        actionTitle: "Create a team",
+                        actionTitle: ui("Opprett team", "Create a team"),
                         action: openTeamPage,
                         emphasized: false
                     )
@@ -403,8 +420,8 @@ private struct UpgradePlansModal: View {
 
     private var billingCyclePicker: some View {
         HStack(spacing: 0) {
-            billingCycleButton(title: "Monthly", cycle: .monthly)
-            billingCycleButton(title: "Annual", cycle: .annual)
+            billingCycleButton(title: ui("Månedlig", "Monthly"), cycle: .monthly)
+            billingCycleButton(title: ui("Årlig", "Annual"), cycle: .annual)
         }
         .padding(4)
         .background(
@@ -533,38 +550,52 @@ private enum AuthFlowMode {
 
     var title: String {
         switch self {
-        case .signIn: return "Log in"
-        case .signUp: return "Create account"
+        case .signIn:
+            return AppSettings.shared.ui("Logg inn", "Log in")
+        case .signUp:
+            return AppSettings.shared.ui("Opprett konto", "Create account")
         }
     }
 
     var subtitle: String {
         switch self {
         case .signIn:
-            return "Sign in with your BlueSpeak account to use dictation, translation and rewrite on any Mac."
+            return AppSettings.shared.ui(
+                "Logg inn med BlueSpeak-kontoen din for å bruke diktering, oversettelse og rewrite på alle Mac-er.",
+                "Sign in with your BlueSpeak account to use dictation, translation and rewrite on any Mac."
+            )
         case .signUp:
-            return "Create a BlueSpeak account with email and password. You can start using the app immediately."
+            return AppSettings.shared.ui(
+                "Opprett en BlueSpeak-konto med e-post og passord. Du kan starte med appen med en gang.",
+                "Create a BlueSpeak account with email and password. You can start using the app immediately."
+            )
         }
     }
 
     var primaryLabel: String {
         switch self {
-        case .signIn: return "Log in"
-        case .signUp: return "Create account"
+        case .signIn:
+            return AppSettings.shared.ui("Logg inn", "Log in")
+        case .signUp:
+            return AppSettings.shared.ui("Opprett konto", "Create account")
         }
     }
 
     var alternatePrompt: String {
         switch self {
-        case .signIn: return "No account yet?"
-        case .signUp: return "Already have an account?"
+        case .signIn:
+            return AppSettings.shared.ui("Ingen konto ennå?", "No account yet?")
+        case .signUp:
+            return AppSettings.shared.ui("Har du allerede en konto?", "Already have an account?")
         }
     }
 
     var alternateLabel: String {
         switch self {
-        case .signIn: return "Sign up"
-        case .signUp: return "Log in"
+        case .signIn:
+            return AppSettings.shared.ui("Registrer deg", "Sign up")
+        case .signUp:
+            return AppSettings.shared.ui("Logg inn", "Log in")
         }
     }
 }
@@ -580,6 +611,10 @@ struct AuthGateView: View {
     @State private var marketingOptIn: Bool = false
     @State private var statusText: String = ""
     @State private var isBusy: Bool = false
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
 
     var body: some View {
         ZStack {
@@ -603,21 +638,36 @@ struct AuthGateView: View {
                             .foregroundStyle(AppTheme.primaryText)
                     }
 
-                    Text("Voice-first writing for every app")
+                    Text(ui("Stemme-først skriving i alle apper", "Voice-first writing for every app"))
                         .font(.system(size: 42, weight: .bold, design: .serif))
                         .foregroundStyle(AppTheme.primaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text("Log in once, then use hold-to-dictate, instant translation and invisible rewrite everywhere you type.")
+                    Text(ui(
+                        "Logg inn én gang, og bruk hold-for-å-diktere, umiddelbar oversettelse og usynlig rewrite overalt du skriver.",
+                        "Log in once, then use hold-to-dictate, instant translation and invisible rewrite everywhere you type."
+                    ))
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        AuthFeatureRow(icon: "mic.fill", text: "Hold \(settings.shortcutTriggerKey.dictateShortcut) to dictate")
-                        AuthFeatureRow(icon: "globe", text: "Hold \(settings.shortcutTriggerKey.translateShortcut) to translate")
-                        AuthFeatureRow(icon: "wand.and.stars", text: "Select text + hold \(settings.shortcutTriggerKey.rewriteShortcut) to rewrite")
-                        AuthFeatureRow(icon: "tray.and.arrow.down.fill", text: "Select message + press \(settings.shortcutTriggerKey.saveReplyContextShortcut) to save reply context")
+                        AuthFeatureRow(icon: "mic.fill", text: ui(
+                            "Hold \(settings.shortcutTriggerKey.dictateShortcut) for å diktere",
+                            "Hold \(settings.shortcutTriggerKey.dictateShortcut) to dictate"
+                        ))
+                        AuthFeatureRow(icon: "globe", text: ui(
+                            "Hold \(settings.shortcutTriggerKey.translateShortcut) for å oversette",
+                            "Hold \(settings.shortcutTriggerKey.translateShortcut) to translate"
+                        ))
+                        AuthFeatureRow(icon: "wand.and.stars", text: ui(
+                            "Marker tekst + hold \(settings.shortcutTriggerKey.rewriteShortcut) for rewrite",
+                            "Select text + hold \(settings.shortcutTriggerKey.rewriteShortcut) to rewrite"
+                        ))
+                        AuthFeatureRow(icon: "tray.and.arrow.down.fill", text: ui(
+                            "Marker melding + trykk \(settings.shortcutTriggerKey.saveReplyContextShortcut) for å lagre svarkontekst",
+                            "Select message + press \(settings.shortcutTriggerKey.saveReplyContextShortcut) to save reply context"
+                        ))
                     }
                     .padding(.top, 4)
                 }
@@ -635,26 +685,29 @@ struct AuthGateView: View {
 
                     VStack(spacing: 12) {
                         if mode == .signUp {
-                            TextField("Full name", text: $fullName)
+                            TextField(ui("Fullt navn", "Full name"), text: $fullName)
                                 .textFieldStyle(.plain)
                                 .storeField(minHeight: 52)
 
-                            TextField("Country", text: $country)
+                            TextField(ui("Land", "Country"), text: $country)
                                 .textFieldStyle(.plain)
                                 .storeField(minHeight: 52)
                         }
 
-                        TextField("you@example.com", text: $email)
+                        TextField(ui("du@eksempel.no", "you@example.com"), text: $email)
                             .textFieldStyle(.plain)
                             .storeField(minHeight: 52)
 
-                        SecureField("Password", text: $password)
+                        SecureField(ui("Passord", "Password"), text: $password)
                             .textFieldStyle(.plain)
                             .storeField(minHeight: 52)
 
                         if mode == .signUp {
                             Toggle(isOn: $marketingOptIn) {
-                                Text("I agree to receive product updates, launch news, and occasional offers by email. You can unsubscribe at any time.")
+                                Text(ui(
+                                    "Jeg godtar å motta produktoppdateringer, lanseringsnyheter og sporadiske tilbud på e-post. Du kan melde deg av når som helst.",
+                                    "I agree to receive product updates, launch news, and occasional offers by email. You can unsubscribe at any time."
+                                ))
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(AppTheme.primaryText)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -673,7 +726,10 @@ struct AuthGateView: View {
                     }
 
                     if showsConfigurationWarning {
-                        Text("Auth is not configured yet. Open advanced settings to add Supabase details.")
+                        Text(ui(
+                            "Innlogging er ikke konfigurert ennå. Åpne avanserte innstillinger for å legge til Supabase-detaljer.",
+                            "Auth is not configured yet. Open advanced settings to add Supabase details."
+                        ))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(AppTheme.warning)
                     } else {
@@ -715,7 +771,7 @@ struct AuthGateView: View {
                     .font(.system(size: 13, weight: .medium))
 
                     if mode == .signIn {
-                        Button("Forgot password?") {
+                        Button(ui("Glemt passord?", "Forgot password?")) {
                             requestPasswordReset()
                         }
                         .buttonStyle(.plain)
@@ -777,19 +833,27 @@ struct AuthGateView: View {
             return statusText
         }
         if settings.supabaseUserEmail.isEmpty {
-            return "Use the same email on every Mac and your JWT will be managed automatically."
+            return ui(
+                "Bruk samme e-post på alle Mac-er, så håndteres JWT automatisk.",
+                "Use the same email on every Mac and your JWT will be managed automatically."
+            )
         }
-        return "Last used account: \(settings.supabaseUserEmail)"
+        return ui("Sist brukte konto: ", "Last used account: ") + settings.supabaseUserEmail
     }
 
     private var statusColor: Color {
         if statusText.localizedCaseInsensitiveContains("failed") ||
             statusText.localizedCaseInsensitiveContains("missing") ||
-            statusText.localizedCaseInsensitiveContains("invalid") {
+            statusText.localizedCaseInsensitiveContains("invalid") ||
+            statusText.localizedCaseInsensitiveContains("feilet") ||
+            statusText.localizedCaseInsensitiveContains("mangler") ||
+            statusText.localizedCaseInsensitiveContains("ugyldig") {
             return AppTheme.warning
         }
         if statusText.localizedCaseInsensitiveContains("signed in") ||
-            statusText.localizedCaseInsensitiveContains("created") {
+            statusText.localizedCaseInsensitiveContains("created") ||
+            statusText.localizedCaseInsensitiveContains("innlogget") ||
+            statusText.localizedCaseInsensitiveContains("opprettet") {
             return AppTheme.success
         }
         return AppTheme.secondaryText
@@ -799,7 +863,9 @@ struct AuthGateView: View {
         guard !isBusy else { return }
 
         isBusy = true
-        statusText = mode == .signIn ? "Signing in..." : "Creating account..."
+        statusText = mode == .signIn
+            ? ui("Logger inn...", "Signing in...")
+            : ui("Oppretter konto...", "Creating account...")
 
         Task {
             defer {
@@ -812,7 +878,10 @@ struct AuthGateView: View {
                 case .signIn:
                     try await settings.signInSupabase(email: email, password: password)
                     email = settings.supabaseUserEmail
-                    statusText = "Signed in. Your JWT is active for backend requests."
+                    statusText = ui(
+                        "Innlogget. JWT er aktiv for backend-kall.",
+                        "Signed in. Your JWT is active for backend requests."
+                    )
                 case .signUp:
                     let result = try await settings.signUpSupabase(
                         email: email,
@@ -824,9 +893,12 @@ struct AuthGateView: View {
                     email = settings.supabaseUserEmail
                     switch result {
                     case .signedIn:
-                        statusText = "Account created. You are signed in."
+                        statusText = ui("Konto opprettet. Du er innlogget.", "Account created. You are signed in.")
                     case .confirmationRequired:
-                        statusText = "Account created. Check your email, then log in."
+                        statusText = ui(
+                            "Konto opprettet. Sjekk e-posten din og logg inn.",
+                            "Account created. Check your email, then log in."
+                        )
                     }
                 }
             } catch {
@@ -850,20 +922,23 @@ struct AuthGateView: View {
     private func requestPasswordReset() {
         guard !isBusy else { return }
         guard !showsConfigurationWarning else {
-            statusText = "Auth is not configured yet."
+            statusText = ui("Innlogging er ikke konfigurert ennå.", "Auth is not configured yet.")
             AppLogStore.shared.record(.warning, "Password reset blocked", metadata: ["reason": "auth_not_configured"])
             return
         }
 
         isBusy = true
-        statusText = "Sending reset email..."
+        statusText = ui("Sender e-post for passordtilbakestilling...", "Sending reset email...")
 
         Task {
             defer { isBusy = false }
 
             do {
                 try await settings.requestSupabasePasswordReset(email: email)
-                statusText = "If the account exists, a password reset email has been sent."
+                statusText = ui(
+                    "Hvis kontoen finnes, er en e-post for passordtilbakestilling sendt.",
+                    "If the account exists, a password reset email has been sent."
+                )
             } catch {
                 statusText = error.localizedDescription
                 AppLogStore.shared.record(.warning, "Password reset failed", metadata: ["error": error.localizedDescription])
@@ -927,6 +1002,14 @@ struct SetupOnboardingView: View {
     private let inputMonitoringSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
     private let permissionRefreshTimer = Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()
 
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
+
+    private var speechRecognitionRequired: Bool {
+        settings.speechRecognitionRequiredForDictation
+    }
+
     var body: some View {
         ZStack {
             AppTheme.canvas
@@ -954,7 +1037,7 @@ struct SetupOnboardingView: View {
                             step = previousStep(for: step)
                             statusText = ""
                         } label: {
-                            Label("Back", systemImage: "arrow.left")
+                            Label(ui("Tilbake", "Back"), systemImage: "arrow.left")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(AppTheme.secondaryText)
                         }
@@ -991,14 +1074,14 @@ struct SetupOnboardingView: View {
                                 .controlSize(.large)
                         }
 
-                        Button("Re-check permissions") {
+                        Button(ui("Sjekk tillatelser på nytt", "Re-check permissions")) {
                             refreshPermissionState()
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.large)
 
                         if showsContinueButton {
-                            Button("Continue", action: continueAction)
+                            Button(ui("Fortsett", "Continue"), action: continueAction)
                                 .buttonStyle(.borderedProminent)
                                 .tint(AppTheme.accent)
                                 .controlSize(.large)
@@ -1007,13 +1090,13 @@ struct SetupOnboardingView: View {
                         }
 
                         if showsSkipButton {
-                            Button("Skip for now", action: skipCurrentOptionalStep)
+                            Button(ui("Hopp over nå", "Skip for now"), action: skipCurrentOptionalStep)
                                 .buttonStyle(.bordered)
                                 .controlSize(.large)
                         }
 
                         if showsFinishButton {
-                            Button("Finish setup", action: finishOnboarding)
+                            Button(ui("Fullfør oppsett", "Finish setup"), action: finishOnboarding)
                                 .buttonStyle(.borderedProminent)
                                 .tint(AppTheme.accent)
                                 .controlSize(.large)
@@ -1044,44 +1127,63 @@ struct SetupOnboardingView: View {
     private var stepTitle: String {
         switch step {
         case .speechRecognition:
-            return "Enable speech recognition"
+            return ui("Aktiver talegjenkjenning", "Enable speech recognition")
         case .microphone:
-            return "Set up your microphone"
+            return ui("Sett opp mikrofon", "Set up your microphone")
         case .accessibility:
-            return "Enable Accessibility"
+            return ui("Aktiver Tilgjengelighet", "Enable Accessibility")
         case .inputMonitoring:
-            return "Enable Input Monitoring"
+            return ui("Aktiver Inndataovervåking", "Enable Input Monitoring")
         }
     }
 
     private var stepSubtitle: String {
         switch step {
         case .speechRecognition:
-            return "BlueSpeak uses Apple's speech recognition to turn your voice into text. You can skip this now and enable it later."
+            if speechRecognitionRequired {
+                return ui(
+                    "BlueSpeak bruker Apples talegjenkjenning for å gjøre stemmen din om til tekst. Du kan hoppe over nå og aktivere senere.",
+                    "BlueSpeak uses Apple's speech recognition to turn your voice into text. You can skip this now and enable it later."
+                )
+            }
+            return ui(
+                "Talegjenkjenning er valgfritt når skybasert STT er valgt. Du kan aktivere det senere hvis du bytter tilbake til Apple Speech.",
+                "Speech recognition is optional when cloud STT is selected. You can enable it later if you switch back to Apple Speech."
+            )
         case .microphone:
-            return "BlueSpeak only activates your microphone when you choose to start dictation. You can skip this now and enable it later."
+            return ui(
+                "BlueSpeak aktiverer bare mikrofonen når du starter diktering. Du kan hoppe over nå og aktivere senere.",
+                "BlueSpeak only activates your microphone when you choose to start dictation. You can skip this now and enable it later."
+            )
         case .accessibility:
-            return "BlueSpeak needs accessibility access to paste dictation into focused text fields and run rewrite."
+            return ui(
+                "BlueSpeak trenger Tilgjengelighet-tilgang for å lime inn diktering i aktive tekstfelt og kjøre rewrite.",
+                "BlueSpeak needs accessibility access to paste dictation into focused text fields and run rewrite."
+            )
         case .inputMonitoring:
-            return "BlueSpeak needs input monitoring to detect the fn key globally and trigger dictation shortcuts."
+            return ui(
+                "BlueSpeak trenger Inndataovervåking for å oppdage hovedtasten globalt og trigge dikteringssnarveier.",
+                "BlueSpeak needs input monitoring to detect the fn key globally and trigger dictation shortcuts."
+            )
         }
     }
 
     private var primaryActionTitle: String {
         switch step {
         case .accessibility:
-            return "Open Accessibility Settings"
+            return ui("Åpne Tilgjengelighet-innstillinger", "Open Accessibility Settings")
         case .inputMonitoring:
-            if inputMonitoringGranted { return "Continue" }
-            return "Allow input monitoring"
+            if inputMonitoringGranted { return ui("Fortsett", "Continue") }
+            return ui("Tillat Inndataovervåking", "Allow input monitoring")
         case .microphone:
             let status = microphonePermissionState()
-            if status == .denied || status == .restricted { return "Open Microphone Settings" }
-            return "Allow microphone"
+            if status == .denied || status == .restricted { return ui("Åpne mikrofoninnstillinger", "Open Microphone Settings") }
+            return ui("Tillat mikrofon", "Allow microphone")
         case .speechRecognition:
+            if !speechRecognitionRequired { return ui("Fortsett", "Continue") }
             let status = SFSpeechRecognizer.authorizationStatus()
-            if status == .denied || status == .restricted { return "Open Speech Settings" }
-            return "Allow speech recognition"
+            if status == .denied || status == .restricted { return ui("Åpne taleinnstillinger", "Open Speech Settings") }
+            return ui("Tillat talegjenkjenning", "Allow speech recognition")
         }
     }
 
@@ -1121,7 +1223,7 @@ struct SetupOnboardingView: View {
     private var currentStepGranted: Bool {
         switch step {
         case .speechRecognition:
-            return speechGranted
+            return !speechRecognitionRequired || speechGranted
         case .microphone:
             return microphoneGranted
         case .accessibility:
@@ -1134,13 +1236,13 @@ struct SetupOnboardingView: View {
     private var grantedBadgeText: String {
         switch step {
         case .accessibility:
-            return "Accessibility access granted"
+            return ui("Tilgjengelighet aktivert", "Accessibility access granted")
         case .inputMonitoring:
-            return "Input Monitoring granted"
+            return ui("Inndataovervåking aktivert", "Input Monitoring granted")
         case .microphone:
-            return "Microphone access granted"
+            return ui("Mikrofontilgang aktivert", "Microphone access granted")
         case .speechRecognition:
-            return "Speech recognition granted"
+            return ui("Talegjenkjenning aktivert", "Speech recognition granted")
         }
     }
 
@@ -1176,22 +1278,22 @@ struct SetupOnboardingView: View {
             ) {
                 permissionStatePill(
                     step: .speechRecognition,
-                    label: "Speech",
+                    label: ui("Tale", "Speech"),
                     granted: speechGranted
                 )
                 permissionStatePill(
                     step: .microphone,
-                    label: "Mic",
+                    label: ui("Mikrofon", "Mic"),
                     granted: microphoneGranted
                 )
                 permissionStatePill(
                     step: .accessibility,
-                    label: "Access",
+                    label: ui("Tilgang", "Access"),
                     granted: accessibilityGranted
                 )
                 permissionStatePill(
                     step: .inputMonitoring,
-                    label: "Input",
+                    label: ui("Inndata", "Input"),
                     granted: inputMonitoringGranted
                 )
             }
@@ -1289,7 +1391,10 @@ struct SetupOnboardingView: View {
         switch step {
         case .microphone:
             step = .speechRecognition
-            statusText = "Microphone can be enabled later in System Settings."
+            statusText = ui(
+                "Mikrofon kan aktiveres senere i Systeminnstillinger.",
+                "Microphone can be enabled later in System Settings."
+            )
         case .speechRecognition:
             finishOnboarding()
         case .accessibility, .inputMonitoring:
@@ -1299,7 +1404,10 @@ struct SetupOnboardingView: View {
 
     private func finishOnboarding() {
         guard criticalPermissionsGranted else {
-            statusText = "Accessibility and Input Monitoring must be enabled before setup can finish."
+            statusText = ui(
+                "Tilgjengelighet og Inndataovervåking må være aktivert før oppsettet kan fullføres.",
+                "Accessibility and Input Monitoring must be enabled before setup can finish."
+            )
             return
         }
 
@@ -1318,28 +1426,49 @@ struct SetupOnboardingView: View {
     }
 
     private func handleSpeechRecognitionAction() {
+        if !speechRecognitionRequired {
+            speechGranted = true
+            statusText = ui(
+                "Talegjenkjenning er valgfritt med nåværende STT-leverandør.",
+                "Speech recognition is optional with current STT provider."
+            )
+            refreshPermissionState()
+            return
+        }
         let status = SFSpeechRecognizer.authorizationStatus()
         switch status {
         case .authorized:
             speechGranted = true
-            statusText = "Speech recognition is ready. Press Continue when you want to move on."
+            statusText = ui(
+                "Talegjenkjenning er klar. Trykk Fortsett når du vil gå videre.",
+                "Speech recognition is ready. Press Continue when you want to move on."
+            )
             refreshPermissionState()
         case .notDetermined:
             SFSpeechRecognizer.requestAuthorization { authorizationStatus in
                 DispatchQueue.main.async {
                     self.refreshPermissionState()
                     if authorizationStatus == .authorized {
-                        self.statusText = "Speech recognition is ready. Press Continue when you want to move on."
+                        self.statusText = ui(
+                            "Talegjenkjenning er klar. Trykk Fortsett når du vil gå videre.",
+                            "Speech recognition is ready. Press Continue when you want to move on."
+                        )
                     } else {
-                        self.statusText = "Speech recognition was denied. Open System Settings to allow it."
+                        self.statusText = ui(
+                            "Talegjenkjenning ble avslått. Åpne Systeminnstillinger for å tillate det.",
+                            "Speech recognition was denied. Open System Settings to allow it."
+                        )
                     }
                 }
             }
         case .denied, .restricted:
-            statusText = "Enable speech recognition in System Settings, then return to BlueSpeak."
+            statusText = ui(
+                "Aktiver talegjenkjenning i Systeminnstillinger, og gå tilbake til BlueSpeak.",
+                "Enable speech recognition in System Settings, then return to BlueSpeak."
+            )
             NSWorkspace.shared.open(speechRecognitionSettingsURL)
         @unknown default:
-            statusText = "Unable to verify speech recognition permission."
+            statusText = ui("Kunne ikke verifisere tillatelse for talegjenkjenning.", "Unable to verify speech recognition permission.")
         }
     }
 
@@ -1353,16 +1482,22 @@ struct SetupOnboardingView: View {
 
         if status == .authorized {
             microphoneGranted = true
-            statusText = "Microphone access is ready. Press Continue when you want to move on."
+            statusText = ui(
+                "Mikrofontilgang er klar. Trykk Fortsett når du vil gå videre.",
+                "Microphone access is ready. Press Continue when you want to move on."
+            )
             refreshPermissionState()
             return
         }
 
         if status == .denied || status == .restricted {
             if status == .restricted {
-                statusText = "Microphone access is restricted by macOS policy."
+                statusText = ui("Mikrofontilgang er begrenset av macOS-policy.", "Microphone access is restricted by macOS policy.")
             } else {
-                statusText = "Microphone access was denied. Open System Settings to allow it."
+                statusText = ui(
+                    "Mikrofontilgang ble avslått. Åpne Systeminnstillinger for å tillate det.",
+                    "Microphone access was denied. Open System Settings to allow it."
+                )
             }
             NSWorkspace.shared.open(microphoneSettingsURL)
             return
@@ -1404,20 +1539,32 @@ struct SetupOnboardingView: View {
         )
 
         if granted || updatedStatus == .authorized {
-            statusText = "Microphone access is ready. Press Continue when you want to move on."
+            statusText = ui(
+                "Mikrofontilgang er klar. Trykk Fortsett når du vil gå videre.",
+                "Microphone access is ready. Press Continue when you want to move on."
+            )
             return
         }
 
         switch updatedStatus {
         case .restricted:
-            statusText = "Microphone access is restricted by macOS policy."
+            statusText = ui("Mikrofontilgang er begrenset av macOS-policy.", "Microphone access is restricted by macOS policy.")
         case .denied:
-            statusText = "Microphone access was denied. Open System Settings to allow it."
+            statusText = ui(
+                "Mikrofontilgang ble avslått. Åpne Systeminnstillinger for å tillate det.",
+                "Microphone access was denied. Open System Settings to allow it."
+            )
             NSWorkspace.shared.open(microphoneSettingsURL)
         case .notDetermined:
-            statusText = "Could not show microphone prompt. Quit and reopen BlueSpeak, then try again."
+            statusText = ui(
+                "Kunne ikke vise mikrofonforespørselen. Avslutt og åpne BlueSpeak på nytt, og prøv igjen.",
+                "Could not show microphone prompt. Quit and reopen BlueSpeak, then try again."
+            )
         case .authorized:
-            statusText = "Microphone access is ready. Press Continue when you want to move on."
+            statusText = ui(
+                "Mikrofontilgang er klar. Trykk Fortsett når du vil gå videre.",
+                "Microphone access is ready. Press Continue when you want to move on."
+            )
         }
     }
 
@@ -1441,7 +1588,10 @@ struct SetupOnboardingView: View {
             return
         }
 
-        statusText = "Enable BlueSpeak in Privacy & Security, then return here and press Continue."
+        statusText = ui(
+            "Aktiver BlueSpeak i Personvern og sikkerhet, gå deretter tilbake hit og trykk Fortsett.",
+            "Enable BlueSpeak in Privacy & Security, then return here and press Continue."
+        )
         NSWorkspace.shared.open(accessibilitySettingsURL)
     }
 
@@ -1455,15 +1605,21 @@ struct SetupOnboardingView: View {
         let granted = CGRequestListenEventAccess()
         refreshPermissionState()
         if granted {
-            statusText = "Input Monitoring is ready. Press Continue when you want to move on."
+            statusText = ui(
+                "Inndataovervåking er klar. Trykk Fortsett når du vil gå videre.",
+                "Input Monitoring is ready. Press Continue when you want to move on."
+            )
         } else {
-            statusText = "Enable BlueSpeak in Input Monitoring, then return here and press Continue."
+            statusText = ui(
+                "Aktiver BlueSpeak i Inndataovervåking, gå deretter tilbake hit og trykk Fortsett.",
+                "Enable BlueSpeak in Input Monitoring, then return here and press Continue."
+            )
             NSWorkspace.shared.open(inputMonitoringSettingsURL)
         }
     }
 
     private func refreshPermissionState() {
-        speechGranted = SFSpeechRecognizer.authorizationStatus() == .authorized
+        speechGranted = !speechRecognitionRequired || (SFSpeechRecognizer.authorizationStatus() == .authorized)
         microphoneGranted = microphonePermissionState() == .authorized
         accessibilityGranted = AXIsProcessTrusted()
         inputMonitoringGranted = CGPreflightListenEventAccess()
@@ -1477,13 +1633,22 @@ struct SetupOnboardingView: View {
         if currentStepGranted {
             switch step {
             case .accessibility:
-                statusText = "Accessibility is ready. Press Continue when you want to move on."
+                statusText = ui(
+                    "Tilgjengelighet er klar. Trykk Fortsett når du vil gå videre.",
+                    "Accessibility is ready. Press Continue when you want to move on."
+                )
             case .inputMonitoring:
-                statusText = "Input Monitoring is ready. Press Continue when you want to move on."
+                statusText = ui(
+                    "Inndataovervåking er klar. Trykk Fortsett når du vil gå videre.",
+                    "Input Monitoring is ready. Press Continue when you want to move on."
+                )
             case .microphone:
-                statusText = "Microphone access is ready. Press Continue when you want to move on."
+                statusText = ui(
+                    "Mikrofontilgang er klar. Trykk Fortsett når du vil gå videre.",
+                    "Microphone access is ready. Press Continue when you want to move on."
+                )
             case .speechRecognition:
-                statusText = "Speech recognition is ready."
+                statusText = ui("Talegjenkjenning er klar.", "Speech recognition is ready.")
             }
         }
 
@@ -1506,26 +1671,44 @@ struct SetupOnboardingView: View {
     private var stepCardTitle: String {
         switch step {
         case .accessibility:
-            return "Accessibility access"
+            return ui("Tilgjengelighet", "Accessibility access")
         case .inputMonitoring:
-            return "Input Monitoring"
+            return ui("Inndataovervåking", "Input Monitoring")
         case .microphone:
-            return "Microphone access"
+            return ui("Mikrofontilgang", "Microphone access")
         case .speechRecognition:
-            return "Speech recognition"
+            return ui("Talegjenkjenning", "Speech recognition")
         }
     }
 
     private var stepCardDescription: String {
         switch step {
         case .accessibility:
-            return "Turn on BlueSpeak in Privacy & Security. macOS can require relaunch before full access becomes active."
+            return ui(
+                "Slå på BlueSpeak i Personvern og sikkerhet. macOS kan kreve omstart før full tilgang blir aktiv.",
+                "Turn on BlueSpeak in Privacy & Security. macOS can require relaunch before full access becomes active."
+            )
         case .inputMonitoring:
-            return "BlueSpeak uses this only to detect the fn shortcut globally. Turn it on, then continue."
+            return ui(
+                "BlueSpeak bruker dette kun for å oppdage hovedtast-snarveien globalt. Slå det på, og fortsett.",
+                "BlueSpeak uses this only to detect the fn shortcut globally. Turn it on, then continue."
+            )
         case .microphone:
-            return "Optional: macOS asks once for microphone access. After you allow it, BlueSpeak can record when you hold fn."
+            return ui(
+                "Valgfritt: macOS spør én gang om mikrofontilgang. Etter at du tillater det, kan BlueSpeak ta opp når du holder hovedtasten.",
+                "Optional: macOS asks once for microphone access. After you allow it, BlueSpeak can record when you hold fn."
+            )
         case .speechRecognition:
-            return "Optional: macOS asks once for voice transcription. After you allow it, BlueSpeak can use Apple's speech recognition engine."
+            if speechRecognitionRequired {
+                return ui(
+                    "Valgfritt: macOS spør én gang om talegjenkjenning. Etter at du tillater det, kan BlueSpeak bruke Apples talegjenkjenning.",
+                    "Optional: macOS asks once for voice transcription. After you allow it, BlueSpeak can use Apple's speech recognition engine."
+                )
+            }
+            return ui(
+                "Valgfritt: dette er ikke nødvendig med sky-STT, men du kan fortsatt aktivere det nå for Apple Speech som reserve.",
+                "Optional: this is not required with cloud STT, but you can still enable it now for Apple Speech fallback."
+            )
         }
     }
 
@@ -1579,6 +1762,10 @@ struct Sidebar: View {
     @Binding var activePage: HomeView.Page
     let onUpgradeTap: () -> Void
 
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
@@ -1623,7 +1810,7 @@ struct Sidebar: View {
             if subscriptionPlan == .free {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("Free plan")
+                        Text(ui("Gratisplan", "Free plan"))
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(AppTheme.primaryText)
 
@@ -1640,13 +1827,16 @@ struct Sidebar: View {
                         .tint(AppTheme.warning)
 
                     HStack(spacing: 8) {
-                        Text("\(displayedWordsUsedToday)/\(Self.freeDailyWordLimit) words today")
+                        Text(ui(
+                            "\(displayedWordsUsedToday)/\(Self.freeDailyWordLimit) ord i dag",
+                            "\(displayedWordsUsedToday)/\(Self.freeDailyWordLimit) words today"
+                        ))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(AppTheme.secondaryText)
 
                         Spacer()
 
-                        Button("Upgrade") {
+                        Button(ui("Oppgrader", "Upgrade")) {
                             onUpgradeTap()
                         }
                         .buttonStyle(.borderedProminent)
@@ -1672,14 +1862,26 @@ struct Sidebar: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Tips")
+                Text(ui("Tips", "Tips"))
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(AppTheme.primaryText)
 
-                tipRow(icon: "mic.fill", text: "Hold \(settings.shortcutTriggerKey.compactLabel) to dictate")
-                tipRow(icon: "globe", text: "\(settings.shortcutTriggerKey.compactLabel) + Shift to translate")
-                tipRow(icon: "wand.and.stars", text: "\(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite")
-                tipRow(icon: "square.and.arrow.down.on.square", text: "\(settings.shortcutTriggerKey.compactLabel) + K to save context")
+                tipRow(icon: "mic.fill", text: ui(
+                    "Hold \(settings.shortcutTriggerKey.compactLabel) for å diktere",
+                    "Hold \(settings.shortcutTriggerKey.compactLabel) to dictate"
+                ))
+                tipRow(icon: "globe", text: ui(
+                    "\(settings.shortcutTriggerKey.compactLabel) + Shift for å oversette",
+                    "\(settings.shortcutTriggerKey.compactLabel) + Shift to translate"
+                ))
+                tipRow(icon: "wand.and.stars", text: ui(
+                    "\(settings.shortcutTriggerKey.compactLabel) + Ctrl for rewrite",
+                    "\(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite"
+                ))
+                tipRow(icon: "square.and.arrow.down.on.square", text: ui(
+                    "\(settings.shortcutTriggerKey.compactLabel) + K for å lagre kontekst",
+                    "\(settings.shortcutTriggerKey.compactLabel) + K to save context"
+                ))
             }
             .padding(.all, 12)
             .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
@@ -1744,7 +1946,7 @@ struct Sidebar: View {
     private var planBadgeLabel: String {
         switch subscriptionPlan {
         case .free:
-            return "Free"
+            return ui("Gratis", "Free")
         case .pro:
             return "Pro"
         case .enterprise:
@@ -1797,8 +1999,8 @@ struct Sidebar: View {
 
     private var wordsLeftLabel: String {
         freeWordsRemaining == 0
-            ? "0 left today"
-            : "\(freeWordsRemaining) left today"
+            ? ui("0 igjen i dag", "0 left today")
+            : ui("\(freeWordsRemaining) igjen i dag", "\(freeWordsRemaining) left today")
     }
 
     @ViewBuilder
@@ -1878,6 +2080,10 @@ struct MainPage: View {
     @ObservedObject private var history = DictationHistory.shared
     @ObservedObject private var settings = AppSettings.shared
 
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -1887,7 +2093,7 @@ struct MainPage: View {
                         .foregroundStyle(AppTheme.primaryText)
 
                     HStack(spacing: 8) {
-                        Text("Press")
+                        Text(ui("Trykk", "Press"))
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(AppTheme.secondaryText)
 
@@ -1905,25 +2111,25 @@ struct MainPage: View {
                                     )
                             )
 
-                        Text("to dictate anywhere.")
+                        Text(ui("for å diktere hvor som helst.", "to dictate anywhere."))
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(AppTheme.secondaryText)
                     }
                 }
 
                 HStack(spacing: 12) {
-                    SimpleStatCard(title: "Day streak", value: streakLabel)
-                    SimpleStatCard(title: "Words today", value: "\(history.todayWordCount)")
-                    SimpleStatCard(title: "Time saved today", value: TimeSaved.formatted(for: history.todayWordCount))
+                    SimpleStatCard(title: ui("Dagsstreak", "Day streak"), value: streakLabel)
+                    SimpleStatCard(title: ui("Ord i dag", "Words today"), value: "\(history.todayWordCount)")
+                    SimpleStatCard(title: ui("Tid spart i dag", "Time saved today"), value: TimeSaved.formatted(for: history.todayWordCount))
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Recent transcriptions")
+                    Text(ui("Nylige transkripsjoner", "Recent transcriptions"))
                         .font(.system(size: 30, weight: .bold, design: .serif))
                         .foregroundStyle(AppTheme.primaryText)
 
                     if recentEntries.isEmpty {
-                        Text("No transcriptions yet.")
+                        Text(ui("Ingen transkripsjoner ennå.", "No transcriptions yet."))
                             .font(.system(size: 14))
                             .foregroundStyle(AppTheme.secondaryText)
                             .padding(.top, 6)
@@ -1942,7 +2148,7 @@ struct MainPage: View {
 
     private var streakLabel: String {
         let days = history.entries.isEmpty ? 0 : 1
-        return "\(days) day"
+        return settings.ui("\(days) dag", "\(days) day")
     }
 
     private var recentEntries: [DictationEntry] {
@@ -1952,24 +2158,29 @@ struct MainPage: View {
     private var welcomeTitle: String {
         let name = settings.greetingDisplayName
         if name.isEmpty {
-            return "Welcome back"
+            return ui("Velkommen tilbake", "Welcome back")
         }
-        return "Welcome back, \(name)"
+        return ui("Velkommen tilbake, \(name)", "Welcome back, \(name)")
     }
 }
 
 struct HistoryPage: View {
     @ObservedObject private var history = DictationHistory.shared
+    @ObservedObject private var settings = AppSettings.shared
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("History")
+                Text(ui("Historikk", "History"))
                     .font(.system(size: 34, weight: .bold, design: .serif))
                     .foregroundStyle(AppTheme.primaryText)
 
                 if history.entries.isEmpty {
-                    Text("No transcriptions yet.")
+                    Text(ui("Ingen transkripsjoner ennå.", "No transcriptions yet."))
                         .font(.system(size: 14))
                         .foregroundStyle(AppTheme.secondaryText)
                         .padding(.top, 6)
@@ -2035,6 +2246,8 @@ struct HistoryRow: View {
     let entry: DictationEntry
     let isLast: Bool
 
+    @ObservedObject private var settings = AppSettings.shared
+
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
@@ -2064,7 +2277,7 @@ struct HistoryRow: View {
                             .foregroundColor(AppTheme.secondaryText)
                     }
                     .buttonStyle(.plain)
-                    .help("Kopier tekst")
+                    .help(settings.ui("Kopier tekst", "Copy text"))
                 }
 
                 Text(entry.text)

@@ -13,6 +13,31 @@ extension Notification.Name {
     static let signedOutPopupRequested = Notification.Name("BlueSpeak.signedOutPopupRequested")
 }
 
+enum InterfaceLanguage: String, CaseIterable, Identifiable {
+    case norwegian = "nb"
+    case english = "en"
+
+    var id: String { rawValue }
+
+    var localeIdentifier: String {
+        switch self {
+        case .norwegian:
+            return "nb"
+        case .english:
+            return "en"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .norwegian:
+            return "Norsk"
+        case .english:
+            return "English"
+        }
+    }
+}
+
 enum AppLanguage: String, CaseIterable, Identifiable {
     case norwegian = "nb-NO"
     case english = "en-US"
@@ -94,20 +119,29 @@ enum InterpretationLevel: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .literal: return "Ordrett"
-        case .balanced: return "Balansert"
-        case .meaning: return "Mening"
+        case .literal: return AppSettings.shared.ui("Ordrett", "Literal")
+        case .balanced: return AppSettings.shared.ui("Balansert", "Balanced")
+        case .meaning: return AppSettings.shared.ui("Mening", "Meaning")
         }
     }
 
     var description: String {
         switch self {
         case .literal:
-            return "Gjentar det som ble sagt, så tett på ordene som mulig."
+            return AppSettings.shared.ui(
+                "Gjentar det som ble sagt, så tett på ordene som mulig.",
+                "Repeats what was said as closely to the original wording as possible."
+            )
         case .balanced:
-            return "Rydder lett opp, men holder seg nær det du sa."
+            return AppSettings.shared.ui(
+                "Rydder lett opp, men holder seg nær det du sa.",
+                "Cleans up lightly, while staying close to what you said."
+            )
         case .meaning:
-            return "Skriver for best mulig mening og flyt uten å finne på noe nytt."
+            return AppSettings.shared.ui(
+                "Skriver for best mulig mening og flyt uten å finne på noe nytt.",
+                "Optimizes for meaning and flow without inventing new content."
+            )
         }
     }
 }
@@ -121,9 +155,55 @@ enum InsertionMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .pasteOnly: return "Paste (Cmd+V)"
-        case .typeOnly:  return "Type (compat)"
-        case .hybrid:    return "Hybrid (paste → fallback type)"
+        case .pasteOnly:
+            return AppSettings.shared.ui("Lim inn (Cmd+V)", "Paste (Cmd+V)")
+        case .typeOnly:
+            return AppSettings.shared.ui("Skriv (kompatibilitet)", "Type (compat)")
+        case .hybrid:
+            return AppSettings.shared.ui("Hybrid (lim inn → fallback skriv)", "Hybrid (paste → fallback type)")
+        }
+    }
+}
+
+enum STTProvider: String, CaseIterable, Identifiable {
+    case appleSpeech
+    case groqWhisperLargeV3
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .appleSpeech:
+            return AppSettings.shared.ui("Apple talegjenkjenning", "Apple Speech")
+        case .groqWhisperLargeV3:
+            return AppSettings.shared.ui("Groq Whisper Large v3", "Groq Whisper Large v3")
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .appleSpeech:
+            return AppSettings.shared.ui("Lokal Apple STT", "Local Apple STT")
+        case .groqWhisperLargeV3:
+            return AppSettings.shared.ui("Skybasert STT via Groq", "Cloud STT via Groq")
+        }
+    }
+
+    var providerLogValue: String {
+        switch self {
+        case .appleSpeech:
+            return "apple_speech"
+        case .groqWhisperLargeV3:
+            return "groq_whisper_large_v3"
+        }
+    }
+
+    var requiresSpeechRecognitionPermission: Bool {
+        switch self {
+        case .appleSpeech:
+            return true
+        case .groqWhisperLargeV3:
+            return false
         }
     }
 }
@@ -140,10 +220,10 @@ enum ShortcutTriggerKey: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .function: return "Fn"
-        case .leftOption: return "Left Option"
-        case .rightOption: return "Right Option"
-        case .leftCommand: return "Left Command"
-        case .rightCommand: return "Right Command"
+        case .leftOption: return AppSettings.shared.ui("Venstre Option", "Left Option")
+        case .rightOption: return AppSettings.shared.ui("Høyre Option", "Right Option")
+        case .leftCommand: return AppSettings.shared.ui("Venstre Command", "Left Command")
+        case .rightCommand: return AppSettings.shared.ui("Høyre Command", "Right Command")
         }
     }
 
@@ -187,9 +267,9 @@ enum EmailReplySignoffMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .none: return "Ingen"
-        case .autoName: return "Auto (Mvh + navn)"
-        case .custom: return "Egen signatur"
+        case .none: return AppSettings.shared.ui("Ingen", "None")
+        case .autoName: return AppSettings.shared.ui("Auto (Mvh + navn)", "Auto (Best regards + name)")
+        case .custom: return AppSettings.shared.ui("Egen signatur", "Custom signature")
         }
     }
 }
@@ -202,8 +282,8 @@ enum EmailReplyGreetingMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .firstName: return "Hei + fornavn"
-        case .fullName: return "Hei + fullt navn"
+        case .firstName: return AppSettings.shared.ui("Hei + fornavn", "Hi + first name")
+        case .fullName: return AppSettings.shared.ui("Hei + fullt navn", "Hi + full name")
         }
     }
 }
@@ -270,7 +350,7 @@ struct ReplyMemoryRule: Identifiable, Codable, Hashable {
 
     var summaryLine: String {
         let trimmed = guidance.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "No guidance yet." }
+        guard !trimmed.isEmpty else { return AppSettings.shared.ui("Ingen veiledning ennå.", "No guidance yet.") }
         if trimmed.count <= 100 { return trimmed }
         return String(trimmed.prefix(97)) + "..."
     }
@@ -319,10 +399,13 @@ enum MicrophoneCatalog {
 
 final class AppSettings: ObservableObject {
     private enum StorageKey {
+        static let interfaceLanguage = "interfaceLanguage"
         static let appLanguage = "appLanguage"
         static let translationTargetLanguage = "translationTargetLanguage"
         static let globalMode = "globalMode"
         static let interpretationLevel = "interpretationLevel"
+        static let sttProvider = "sttProvider"
+        static let groqAPIKey = "groqAPIKey"
         static let shortcutTriggerKey = "shortcutTriggerKey"
         static let statusMenuAdvancedModeEnabled = "statusMenuAdvancedModeEnabled"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
@@ -375,6 +458,10 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: StorageKey.appLanguage) }
     }
 
+    @Published var interfaceLanguage: InterfaceLanguage {
+        didSet { UserDefaults.standard.set(interfaceLanguage.rawValue, forKey: StorageKey.interfaceLanguage) }
+    }
+
     @Published var translationTargetLanguage: AppLanguage {
         didSet { UserDefaults.standard.set(translationTargetLanguage.rawValue, forKey: StorageKey.translationTargetLanguage) }
     }
@@ -385,6 +472,25 @@ final class AppSettings: ObservableObject {
 
     @Published var interpretationLevel: InterpretationLevel {
         didSet { UserDefaults.standard.set(interpretationLevel.rawValue, forKey: StorageKey.interpretationLevel) }
+    }
+
+    @Published var sttProvider: STTProvider {
+        didSet { UserDefaults.standard.set(sttProvider.rawValue, forKey: StorageKey.sttProvider) }
+    }
+
+    @Published var groqAPIKey: String {
+        didSet {
+            let normalized = groqAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if groqAPIKey != normalized {
+                groqAPIKey = normalized
+                return
+            }
+            if normalized.isEmpty {
+                UserDefaults.standard.removeObject(forKey: StorageKey.groqAPIKey)
+            } else {
+                UserDefaults.standard.set(normalized, forKey: StorageKey.groqAPIKey)
+            }
+        }
     }
 
     @Published var shortcutTriggerKey: ShortcutTriggerKey {
@@ -559,6 +665,9 @@ final class AppSettings: ObservableObject {
     private var cachedSupabaseRefreshToken: String
 
     private init() {
+        let rawInterfaceLanguage = UserDefaults.standard.string(forKey: StorageKey.interfaceLanguage) ?? InterfaceLanguage.norwegian.rawValue
+        self.interfaceLanguage = InterfaceLanguage(rawValue: rawInterfaceLanguage) ?? .norwegian
+
         let rawLanguage = UserDefaults.standard.string(forKey: StorageKey.appLanguage) ?? AppLanguage.norwegian.rawValue
         self.appLanguage = AppLanguage(rawValue: rawLanguage) ?? .norwegian
 
@@ -571,6 +680,17 @@ final class AppSettings: ObservableObject {
 
         let rawInterpretationLevel = UserDefaults.standard.string(forKey: StorageKey.interpretationLevel) ?? InterpretationLevel.balanced.rawValue
         self.interpretationLevel = InterpretationLevel(rawValue: rawInterpretationLevel) ?? .balanced
+
+        let rawSTTProvider = UserDefaults.standard.string(forKey: StorageKey.sttProvider) ?? STTProvider.appleSpeech.rawValue
+        self.sttProvider = STTProvider(rawValue: rawSTTProvider) ?? .appleSpeech
+
+        let envGroqAPIKey = Self.envString(forKeys: [
+            "BLUESPEAK_GROQ_API_KEY",
+            "GROQ_API_KEY"
+        ])
+        let storedGroqAPIKey = UserDefaults.standard.string(forKey: StorageKey.groqAPIKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.groqAPIKey = storedGroqAPIKey.isEmpty ? envGroqAPIKey : storedGroqAPIKey
 
         let rawShortcutTrigger = UserDefaults.standard.string(forKey: StorageKey.shortcutTriggerKey) ?? ShortcutTriggerKey.function.rawValue
         self.shortcutTriggerKey = ShortcutTriggerKey(rawValue: rawShortcutTrigger) ?? .function
@@ -851,8 +971,8 @@ final class AppSettings: ObservableObject {
             return ""
         case .autoName:
             let name = greetingDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return "Mvh" }
-            return "Mvh,\n\(name)"
+            guard !name.isEmpty else { return ui("Mvh", "Best regards") }
+            return ui("Mvh,\n\(name)", "Best regards,\n\(name)")
         case .custom:
             return emailReplyCustomSignature.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -860,7 +980,22 @@ final class AppSettings: ObservableObject {
 
     var shortcutInstructionText: String {
         let trigger = shortcutTriggerKey.label
-        return "Hold \(trigger) for å starte diktering. Slipp \(trigger) for å sette inn teksten. Hold \(trigger) + Shift for oversettelse i én diktering. Marker tekst og trykk \(trigger) + K for å lagre siste melding midlertidig. Hold \(trigger) + Control mens du sier rewrite-instruksjonen, og slipp \(trigger) for å kjøre."
+        return ui(
+            "Hold \(trigger) for å starte diktering. Slipp \(trigger) for å sette inn teksten. Hold \(trigger) + Shift for oversettelse i én diktering. Marker tekst og trykk \(trigger) + K for å lagre siste melding midlertidig. Hold \(trigger) + Control mens du sier rewrite-instruksjonen, og slipp \(trigger) for å kjøre.",
+            "Hold \(trigger) to start dictation. Release \(trigger) to insert text. Hold \(trigger) + Shift for translation in one capture. Select text and press \(trigger) + K to save the latest message temporarily. Hold \(trigger) + Control while speaking the rewrite instruction, then release \(trigger) to run."
+        )
+    }
+
+    var speechRecognitionRequiredForDictation: Bool {
+        sttProvider.requiresSpeechRecognitionPermission
+    }
+
+    var isEnglishInterface: Bool {
+        interfaceLanguage == .english
+    }
+
+    func ui(_ norwegian: String, _ english: String) -> String {
+        isEnglishInterface ? english : norwegian
     }
 
     @MainActor

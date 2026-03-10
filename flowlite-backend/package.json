@@ -15,7 +15,12 @@
     "launch:check": "node scripts/launch-check.mjs",
     "check:local": "node scripts/launch-check.mjs --url http://127.0.0.1:3000",
     "latency:smoke": "node scripts/latency-smoke.mjs",
-    "latency:profile": "node scripts/latency-profile.mjs"
+    "latency:profile": "node scripts/latency-profile.mjs",
+    "stt:ab": "node scripts/stt-ab.mjs",
+    "stt:apple": "swift scripts/stt-apple.swift",
+    "stt:log": "node scripts/stt-log-summary.mjs",
+    "stt:log:capture": "node scripts/stt-log-summary.mjs --message \"STT capture finished\" --provider apple_speech",
+    "stt:log:e2e": "node scripts/stt-log-summary.mjs --message \"STT release-to-insert\" --provider apple_speech"
   },
   "dependencies": {
     "jose": "^5.9.6"

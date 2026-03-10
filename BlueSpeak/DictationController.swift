@@ -7,6 +7,11 @@ import AudioToolbox
 import CoreAudio
 
 final class DictationController: NSObject {
+    enum CaptureMode {
+        case dictation
+        case rewriteInstruction
+    }
+
     private enum Timing {
         static let pasteDelay: TimeInterval = 0.08
         static let pasteCompletionDelay: TimeInterval = 0.08
@@ -30,6 +35,21 @@ final class DictationController: NSObject {
         static let audioBufferSize: AVAudioFrameCount = 4096
     }
 
+    private enum GroqConfig {
+        static let endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+        static let model = "whisper-large-v3"
+        static let timeout: TimeInterval = 18
+        static let sampleRateWav: Double = 16_000
+        static let sampleRateAAC: Double = 44_100
+        static let channelCount: Int = 1
+        static let aacBitRate: Int = 64_000
+    }
+
+    private enum STTFallbackConfig {
+        static let appleFailureThreshold = 3
+        static let fallbackCaptureCount = 5
+    }
+
     private enum LanguageGuard {
         static let englishGreetingPrefixes = ["hi", "hello", "dear"]
         static let englishSignoffPrefixes = ["best regards", "regards", "sincerely"]
@@ -46,6 +66,8 @@ final class DictationController: NSObject {
     private let audioEngine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    private var groqRecorder: AVAudioRecorder?
+    private var groqRecordingURL: URL?
     private let startSound = NSSound(named: "Pop")
 
     private(set) var isRecording: Bool = false
@@ -55,6 +77,11 @@ final class DictationController: NSObject {
     private var hasReceivedTranscriptInCurrentCapture: Bool = false
     private var startTokenCounter: Int = 0
     private var expectedStartToken: Int = 0
+    private var captureStartedAt: Date?
+    private var captureMode: CaptureMode = .dictation
+    private var activeSTTProvider: STTProvider = .appleSpeech
+    private var appleConsecutiveFailures: Int = 0
+    private var autoFallbackCapturesRemaining: Int = 0
 
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -84,6 +111,10 @@ final class DictationController: NSObject {
     private var lastSpeculativeStartedAt: Date = .distantPast
     private var speculativeRequestsThisSession: Int = 0
 
+    var activeSTTProviderLogValue: String {
+        activeSTTProvider.providerLogValue
+    }
+
     func prefetchContext() {
         prefetchedContext = resolver.resolve()
     }
@@ -107,16 +138,54 @@ final class DictationController: NSObject {
         print("🧠 dictation:", interpretationLevel.label)
     }
 
-    func start() {
+    func start(mode: CaptureMode = .dictation) {
         guard !isRecording, !isStarting else { return }
+        captureMode = mode
+        activeSTTProvider = selectedProvider(for: mode)
+        if mode == .dictation,
+           settings.sttProvider == .appleSpeech,
+           activeSTTProvider == .groqWhisperLargeV3 {
+            autoFallbackCapturesRemaining = max(0, autoFallbackCapturesRemaining - 1)
+            AppLogStore.shared.record(
+                .info,
+                "STT auto-fallback active",
+                metadata: [
+                    "provider": activeSTTProvider.providerLogValue,
+                    "remainingCaptures": "\(autoFallbackCapturesRemaining)",
+                    "appleFailureStreak": "\(appleConsecutiveFailures)"
+                ]
+            )
+        }
         resetSpeculativeState(cancel: true)
         finalText = ""
         hasReceivedTranscriptInCurrentCapture = false
+        captureStartedAt = nil
         startTokenCounter += 1
         let token = startTokenCounter
         expectedStartToken = token
         isStarting = true
 
+        switch activeSTTProvider {
+        case .appleSpeech:
+            startWithAppleSpeech(token: token)
+        case .groqWhisperLargeV3:
+            startWithGroq(token: token)
+        }
+    }
+
+    private func selectedProvider(for mode: CaptureMode) -> STTProvider {
+        if mode == .rewriteInstruction {
+            return .appleSpeech
+        }
+        if settings.sttProvider == .appleSpeech,
+           autoFallbackCapturesRemaining > 0,
+           !settings.groqAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .groqWhisperLargeV3
+        }
+        return settings.sttProvider
+    }
+
+    private func startWithAppleSpeech(token: Int) {
         SFSpeechRecognizer.requestAuthorization { [weak self] authStatus in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -140,6 +209,26 @@ final class DictationController: NSObject {
         }
     }
 
+    private func startWithGroq(token: Int) {
+        let apiKey = settings.groqAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty else {
+            reportCaptureInterruption("Groq API key mangler. Sett den i Settings → Advanced → Backend.")
+            cancelPendingStart()
+            return
+        }
+
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            DispatchQueue.main.async {
+                guard self.shouldProceedStart(token: token) else { return }
+                guard granted else {
+                    self.cancelPendingStart()
+                    return
+                }
+                self.startGroqInternal(startToken: token)
+            }
+        }
+    }
+
     func stopAndInsert() {
         if isStarting && !isRecording {
             clearOneShotOutputLanguageOverride()
@@ -154,11 +243,101 @@ final class DictationController: NSObject {
         speculativeDebounceWorkItem?.cancel()
         speculativeDebounceWorkItem = nil
 
+        if activeSTTProvider == .groqWhisperLargeV3 {
+            let captureDurationMs = captureStartedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
+            captureStartedAt = nil
+            let captureToken = startTokenCounter
+            let recordingURL = groqRecordingURL
+            groqRecordingURL = nil
+
+            guard let recordingURL else {
+                resetSpeculativeState(cancel: true)
+                return
+            }
+
+            Task { [weak self] in
+                guard let self else { return }
+                defer { try? FileManager.default.removeItem(at: recordingURL) }
+
+                do {
+                    let raw = try await self.transcribeGroqAudioFile(recordingURL)
+                    if !raw.isEmpty && captureDurationMs > 0 {
+                        await MainActor.run {
+                            AppLogStore.shared.record(
+                                .info,
+                                "STT capture finished",
+                                metadata: [
+                                    "provider": self.activeSTTProvider.providerLogValue,
+                                    "ms": "\(captureDurationMs)",
+                                    "chars": "\(raw.count)",
+                                    "locale": self.speechLocaleIdentifier
+                                ]
+                            )
+                        }
+                    }
+
+                    guard !raw.isEmpty else {
+                        await MainActor.run {
+                            self.resetSpeculativeState(cancel: true)
+                        }
+                        return
+                    }
+
+                    await MainActor.run {
+                        guard captureToken == self.startTokenCounter else {
+                            AppLogStore.shared.record(
+                                .info,
+                                "Groq STT result dropped",
+                                metadata: ["reason": "new_capture_started"]
+                            )
+                            return
+                        }
+                        self.handleCapturedText(raw, outputLanguageOverride: outputLanguageOverride)
+                    }
+                } catch {
+                    await MainActor.run {
+                        AppLogStore.shared.record(
+                            .warning,
+                            "Groq STT failed",
+                            metadata: ["error": error.localizedDescription]
+                        )
+                        self.reportCaptureInterruption("Groq STT failed: \(error.localizedDescription)")
+                        self.resetSpeculativeState(cancel: true)
+                    }
+                }
+            }
+            return
+        }
+
         let raw = consumeCapturedTranscript()
+        let captureDurationMs = captureStartedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
+        captureStartedAt = nil
+        if !raw.isEmpty && captureDurationMs > 0 {
+            AppLogStore.shared.record(
+                .info,
+                "STT capture finished",
+                metadata: [
+                    "provider": "apple_speech",
+                    "ms": "\(captureDurationMs)",
+                    "chars": "\(raw.count)",
+                    "locale": speechLocaleIdentifier
+                ]
+            )
+        }
         guard !raw.isEmpty else {
             resetSpeculativeState(cancel: true)
             return
         }
+
+        handleCapturedText(raw, outputLanguageOverride: outputLanguageOverride)
+    }
+
+    private func handleCapturedText(_ raw: String, outputLanguageOverride: String?) {
+        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            resetSpeculativeState(cancel: true)
+            return
+        }
+        markCaptureSuccess(for: activeSTTProvider)
 
         let ctx = prefetchedContext ?? resolver.resolve()
         prefetchedContext = nil
@@ -270,6 +449,7 @@ final class DictationController: NSObject {
         speculativeDebounceWorkItem = nil
 
         let captured = consumeCapturedTranscript()
+        captureStartedAt = nil
         resetSpeculativeState(cancel: true)
         return captured
     }
@@ -280,6 +460,7 @@ final class DictationController: NSObject {
         resetSpeculativeState(cancel: true)
         finalText = ""
         hasReceivedTranscriptInCurrentCapture = false
+        captureStartedAt = nil
     }
 
     // MARK: - Insert
@@ -1260,6 +1441,220 @@ final class DictationController: NSObject {
         }
     }
 
+    private func startGroqInternal(startToken: Int) {
+        guard shouldProceedStart(token: startToken) else { return }
+        guard !isRecording else { return }
+
+        if audioEngine.isRunning {
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+        }
+        task?.cancel()
+        task = nil
+        request = nil
+
+        let tempDir = FileManager.default.temporaryDirectory
+        let wavURL = tempDir
+            .appendingPathComponent("bluespeak-stt-\(UUID().uuidString)")
+            .appendingPathExtension("wav")
+        let m4aURL = tempDir
+            .appendingPathComponent("bluespeak-stt-\(UUID().uuidString)")
+            .appendingPathExtension("m4a")
+
+        let wavSettings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: GroqConfig.sampleRateWav,
+            AVNumberOfChannelsKey: GroqConfig.channelCount,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false
+        ]
+
+        let aacSettings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: GroqConfig.sampleRateAAC,
+            AVNumberOfChannelsKey: GroqConfig.channelCount,
+            AVEncoderBitRateKey: GroqConfig.aacBitRate,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+
+        let attempts: [(url: URL, settings: [String: Any], format: String)] = [
+            (wavURL, wavSettings, "wav_pcm_16k"),
+            (m4aURL, aacSettings, "m4a_aac_44k")
+        ]
+
+        for attempt in attempts {
+            do {
+                let recorder = try AVAudioRecorder(url: attempt.url, settings: attempt.settings)
+                recorder.prepareToRecord()
+                if recorder.record() {
+                    groqRecorder = recorder
+                    groqRecordingURL = attempt.url
+
+                    print(
+                        "🎤 groq stt locale:",
+                        speechLocaleIdentifier,
+                        "| ai target:",
+                        effectiveTargetLanguage(overrideCode: oneShotOutputLanguageOverride),
+                        "| mic:",
+                        selectedMicrophoneNameForLogs(),
+                        "| format:",
+                        attempt.format
+                    )
+                    playStartSound()
+
+                    isStarting = false
+                    isRecording = true
+                    captureStartedAt = Date()
+                    return
+                }
+
+                AppLogStore.shared.record(
+                    .warning,
+                    "Groq recorder start returned false",
+                    metadata: [
+                        "format": attempt.format,
+                        "path": attempt.url.path
+                    ]
+                )
+            } catch {
+                AppLogStore.shared.record(
+                    .warning,
+                    "Groq recorder setup failed",
+                    metadata: [
+                        "format": attempt.format,
+                        "error": error.localizedDescription
+                    ]
+                )
+            }
+        }
+
+        reportCaptureInterruption("Could not start microphone capture.")
+        cancelPendingStart()
+    }
+
+    private func transcribeGroqAudioFile(_ fileURL: URL) async throws -> String {
+        let apiKey = settings.groqAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty else {
+            throw AIClientError.transport("Missing Groq API key.")
+        }
+
+        let languageHint = normalizedGroqLanguageHint(from: speechLocaleIdentifier)
+        let boundary = "----BlueSpeakSTT\(UUID().uuidString)"
+        var request = URLRequest(url: URL(string: GroqConfig.endpoint)!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = GroqConfig.timeout
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        let data = try Data(contentsOf: fileURL)
+        let payload = multipartPayload(
+            boundary: boundary,
+            audioData: data,
+            audioFileURL: fileURL,
+            languageHint: languageHint
+        )
+        request.httpBody = payload
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.timeoutIntervalForRequest = GroqConfig.timeout
+        sessionConfig.timeoutIntervalForResource = GroqConfig.timeout + 2
+        let session = URLSession(configuration: sessionConfig)
+        let (responseData, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw AIClientError.transport("No HTTP response")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            let body = String(data: responseData, encoding: .utf8) ?? ""
+            throw AIClientError.badStatus(http.statusCode, body)
+        }
+
+        let decoded = try JSONDecoder().decode(GroqTranscriptionResponse.self, from: responseData)
+        let trimmed = decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed
+    }
+
+    private func multipartPayload(
+        boundary: String,
+        audioData: Data,
+        audioFileURL: URL,
+        languageHint: String?
+    ) -> Data {
+        var body = Data()
+
+        func appendField(_ name: String, value: String) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+
+        appendField("model", value: GroqConfig.model)
+        appendField("temperature", value: "0")
+        appendField("response_format", value: "verbose_json")
+        if let languageHint, !languageHint.isEmpty {
+            appendField("language", value: languageHint)
+        }
+
+        let fileName = audioFileURL.lastPathComponent
+        let mimeType = mimeTypeForAudioFile(audioFileURL)
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        body.append(audioData)
+        body.append("\r\n".data(using: .utf8)!)
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        return body
+    }
+
+    private func mimeTypeForAudioFile(_ fileURL: URL) -> String {
+        switch fileURL.pathExtension.lowercased() {
+        case "wav":
+            return "audio/wav"
+        case "m4a":
+            return "audio/mp4"
+        default:
+            return "application/octet-stream"
+        }
+    }
+
+    private func normalizedGroqLanguageHint(from locale: String) -> String {
+        let lower = locale.lowercased()
+        if lower.hasPrefix("nb") || lower.hasPrefix("nn") || lower.hasPrefix("no") {
+            return "no"
+        }
+        if lower.hasPrefix("en") {
+            return "en"
+        }
+        if lower.hasPrefix("es") {
+            return "es"
+        }
+        if lower.hasPrefix("fr") {
+            return "fr"
+        }
+        if lower.hasPrefix("de") {
+            return "de"
+        }
+        if lower.hasPrefix("pt") {
+            return "pt"
+        }
+        if lower.hasPrefix("it") {
+            return "it"
+        }
+        if lower.hasPrefix("nl") {
+            return "nl"
+        }
+        if lower.hasPrefix("pl") {
+            return "pl"
+        }
+        if lower.hasPrefix("ar") {
+            return "ar"
+        }
+        if lower.hasPrefix("uk") {
+            return "uk"
+        }
+        return "en"
+    }
+
     private func startInternal(startToken: Int) {
         guard shouldProceedStart(token: startToken) else { return }
         guard !isRecording else { return }
@@ -1305,6 +1700,7 @@ final class DictationController: NSObject {
 
         isStarting = false
         isRecording = true
+        captureStartedAt = Date()
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             guard let self else { return }
@@ -1327,7 +1723,7 @@ final class DictationController: NSObject {
                     self.finalText = ""
                     self.hasReceivedTranscriptInCurrentCapture = false
                     if shouldNotify {
-                        self.onCaptureInterrupted?(error?.localizedDescription)
+                        self.reportCaptureInterruption(error?.localizedDescription)
                     }
                 }
             }
@@ -1348,6 +1744,13 @@ final class DictationController: NSObject {
         isStarting = false
         isRecording = false
         clearOneShotOutputLanguageOverride()
+
+        if let recorder = groqRecorder {
+            if recorder.isRecording {
+                recorder.stop()
+            }
+            groqRecorder = nil
+        }
 
         if audioEngine.isRunning { audioEngine.stop() }
         audioEngine.inputNode.removeTap(onBus: 0)
@@ -1391,6 +1794,16 @@ final class DictationController: NSObject {
             return "System Default"
         }
 
+        return MicrophoneCatalog.availableOptions()
+            .first(where: { $0.id == selectedUID })?
+            .name ?? selectedUID
+    }
+
+    private func selectedMicrophoneNameForLogs() -> String {
+        let selectedUID = settings.selectedMicrophoneUID
+        if selectedUID == MicrophoneOption.systemDefaultID {
+            return "System Default"
+        }
         return MicrophoneCatalog.availableOptions()
             .first(where: { $0.id == selectedUID })?
             .name ?? selectedUID
@@ -1485,12 +1898,70 @@ final class DictationController: NSObject {
     }
 
     private func reportCaptureInterruption(_ message: String?) {
+        markCaptureFailure(for: activeSTTProvider, message: message)
         if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             AppLogStore.shared.record(.warning, "Capture interrupted", metadata: ["message": message])
         }
         DispatchQueue.main.async {
             self.onCaptureInterrupted?(message)
         }
+    }
+
+    private func markCaptureSuccess(for provider: STTProvider) {
+        guard captureMode == .dictation, settings.sttProvider == .appleSpeech else { return }
+        guard provider == .appleSpeech else { return }
+        if appleConsecutiveFailures > 0 || autoFallbackCapturesRemaining > 0 {
+            AppLogStore.shared.record(
+                .info,
+                "Apple STT recovered",
+                metadata: [
+                    "failureStreakBeforeReset": "\(appleConsecutiveFailures)",
+                    "fallbackCapturesRemainingBeforeReset": "\(autoFallbackCapturesRemaining)"
+                ]
+            )
+        }
+        appleConsecutiveFailures = 0
+        autoFallbackCapturesRemaining = 0
+    }
+
+    private func markCaptureFailure(for provider: STTProvider, message: String?) {
+        guard captureMode == .dictation, settings.sttProvider == .appleSpeech else { return }
+        guard provider == .appleSpeech else { return }
+
+        appleConsecutiveFailures += 1
+        AppLogStore.shared.record(
+            .warning,
+            "Apple STT failure",
+            metadata: [
+                "streak": "\(appleConsecutiveFailures)",
+                "message": message ?? "unknown"
+            ]
+        )
+
+        guard appleConsecutiveFailures >= STTFallbackConfig.appleFailureThreshold else { return }
+        let hasGroqKey = !settings.groqAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasGroqKey else {
+            AppLogStore.shared.record(
+                .warning,
+                "STT auto-fallback unavailable",
+                metadata: ["reason": "missing_groq_api_key"]
+            )
+            return
+        }
+
+        autoFallbackCapturesRemaining = max(
+            autoFallbackCapturesRemaining,
+            STTFallbackConfig.fallbackCaptureCount
+        )
+        AppLogStore.shared.record(
+            .warning,
+            "STT auto-fallback enabled",
+            metadata: [
+                "provider": STTProvider.groqWhisperLargeV3.providerLogValue,
+                "appleFailureStreak": "\(appleConsecutiveFailures)",
+                "fallbackCaptures": "\(autoFallbackCapturesRemaining)"
+            ]
+        )
     }
 
     // MARK: - Basic polish
@@ -1508,6 +1979,10 @@ final class DictationController: NSObject {
         }
         return s
     }
+}
+
+private struct GroqTranscriptionResponse: Decodable {
+    let text: String
 }
 
 private enum EmailBodyRegex {

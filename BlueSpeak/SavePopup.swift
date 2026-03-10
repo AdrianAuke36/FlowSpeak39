@@ -121,15 +121,20 @@ struct SaveCheckmark: View {
 }
 
 struct SaveToastPanelView: View {
+    @ObservedObject private var settings = AppSettings.shared
     @State private var opacity: Double = 0
     @State private var scale: CGFloat = 0.94
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Color(nsColor: .systemGreen))
-            Text("Tekst lagret")
+            Text(ui("Tekst lagret", "Text saved"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.9))
         }
@@ -159,15 +164,20 @@ struct SaveToastPanelView: View {
 }
 
 struct SaveFailedToastPanelView: View {
+    @ObservedObject private var settings = AppSettings.shared
     @State private var opacity: Double = 0
     @State private var scale: CGFloat = 0.94
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "xmark.octagon.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color(nsColor: .systemOrange))
-            Text("Ingen tekst markert")
+            Text(ui("Ingen tekst markert", "No text selected"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.9))
         }

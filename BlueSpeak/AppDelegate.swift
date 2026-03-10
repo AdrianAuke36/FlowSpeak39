@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private enum Constants {
         static let backendPollIntervalNanos: UInt64 = 15_000_000_000
         static let rewriteCopyDelayNanos: UInt64 = 170_000_000
+        static let rewriteSelectAllDelayNanos: UInt64 = 90_000_000
+        static let rewriteCollapseSelectionDelayNanos: UInt64 = 70_000_000
         static let quickReplyCopyDelayNanos: UInt64 = 260_000_000
         static let quickReplyWaitReleaseStepNanos: UInt64 = 35_000_000
         static let quickReplyWaitReleaseMaxSteps: Int = 8
@@ -85,6 +87,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var hasPendingQuickReplyContextRewrite: Bool = false
     private var lastQuickReplyCaptureAt: Date = .distantPast
     private var triggerShortcutSuppressionUntil: Date = .distantPast
+    private var pendingReleaseToInsertStartedAt: Date?
+    private var pendingReleaseToInsertMode: String = "dictate"
+
+    private func menuUI(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogStore.shared.record(.info, "App launched")
@@ -169,6 +177,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func observeSettingsChanges() {
+        settings.$interfaceLanguage
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.rebuildStatusMenu()
+            }
+            .store(in: &cancellables)
+
         settings.$appLanguage
             .removeDuplicates()
             .sink { [weak self] language in
@@ -236,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             guard !self.isSelectionRewriteInProgress else { return }
             self.runWhenCaptureIdle {
+                self.logReleaseToInsertLatencyIfNeeded()
                 self.overlay.hide()
             }
         }
@@ -526,6 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             isPersistentCaptureLocked = false
             overlay.setLocked(false)
             overlay.hide()
+            clearPendingReleaseToInsertLatency()
             updateStatusIcon(isRecording: false)
         }
         Task { @MainActor [weak self] in
@@ -552,6 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if dictation.isCaptureActive {
                 dictation.cancelCapture()
                 overlay.hide()
+                clearPendingReleaseToInsertLatency()
                 updateStatusIcon(isRecording: false)
             }
             fnIsDown = true
@@ -579,6 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             cancelPendingFnStart()
             didSetTranslationOverrideInCurrentFnHold = false
             if didConsumeFnHoldForRewriteCombo {
+                clearPendingReleaseToInsertLatency()
                 didConsumeFnHoldForRewriteCombo = false
                 if isPersistentCaptureLocked {
                     return
@@ -589,7 +608,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
             if isPersistentCaptureLocked {
+                clearPendingReleaseToInsertLatency()
                 return
+            }
+            if dictation.isCaptureActive {
+                beginReleaseToInsertLatency(
+                    mode: (didSetTranslationOverrideInCurrentFnHold || shiftDown) ? "translate" : "dictate"
+                )
+            } else {
+                clearPendingReleaseToInsertLatency()
             }
             scheduleFnReleaseAction { [weak self] in
                 self?.handleFnReleased()
@@ -664,6 +691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isCapturingRewriteInstruction = false
         triggerShortcutSuppressionUntil = .distantPast
         pendingRewriteTargetApp = nil
+        clearPendingReleaseToInsertLatency()
         cancelPendingFnStart()
         cancelPendingFnReleaseAction()
         overlay.setLocked(false)
@@ -685,13 +713,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 functionModifierIsDown.toggle()
             }
         } else if event.type == .flagsChanged && event.keyCode == UInt16(kVK_Option) {
-            leftOptionModifierIsDown.toggle()
+            // Use the actual modifier flags instead of toggling to avoid
+            // false up/down transitions in some apps (for example Notes).
+            leftOptionModifierIsDown = flags.contains(.option)
         } else if event.type == .flagsChanged && event.keyCode == UInt16(kVK_RightOption) {
-            rightOptionModifierIsDown.toggle()
+            rightOptionModifierIsDown = flags.contains(.option)
         } else if event.type == .flagsChanged && event.keyCode == UInt16(kVK_Command) {
-            leftCommandModifierIsDown.toggle()
+            leftCommandModifierIsDown = flags.contains(.command)
         } else if event.type == .flagsChanged && event.keyCode == UInt16(kVK_RightCommand) {
-            rightCommandModifierIsDown.toggle()
+            rightCommandModifierIsDown = flags.contains(.command)
         }
 
         if flags.contains(.function) {
@@ -728,6 +758,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func handleFnPressed() {
         guard !dictation.isCaptureActive else { return }
+        clearPendingReleaseToInsertLatency()
         guard settings.hasAuthenticatedSession else {
             Task { @MainActor in
                 settings.requestSignedOutPopup()
@@ -747,12 +778,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         overlay.setLocked(false)
         dictation.prefetchContext()
         overlay.showListening(mode: shiftIsDown ? .translation : .standard)
-        dictation.start()
+        dictation.start(mode: .dictation)
         updateStatusIcon(isRecording: true)
     }
 
     private func handleFnReleased() {
-        guard dictation.isCaptureActive else { return }
+        guard dictation.isCaptureActive else {
+            clearPendingReleaseToInsertLatency()
+            return
+        }
         isPersistentCaptureLocked = false
         overlay.setLocked(false)
         overlay.hide()
@@ -838,7 +872,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @MainActor
-    private func readSelectedTextFromFocusedApp(copyDelayNanos: UInt64 = Constants.rewriteCopyDelayNanos) async -> (PasteboardSnapshot, String) {
+    private func readSelectedTextFromFocusedApp(copyDelayNanos: UInt64) async -> (PasteboardSnapshot, String) {
         let snapshot = capturePasteboardSnapshot()
         let sentinel = "__bluespeak_selection__\(UUID().uuidString)"
         writeStringToPasteboard(sentinel)
@@ -869,7 +903,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AppLogStore.shared.record(.info, "Rewrite instruction capture started")
         overlay.setLocked(false)
         overlay.showListening(mode: .rewrite)
-        dictation.start()
+        dictation.start(mode: .rewriteInstruction)
         updateStatusIcon(isRecording: true)
     }
 
@@ -947,6 +981,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard dictation.isCaptureActive else {
             isPersistentCaptureLocked = false
             overlay.setLocked(false)
+            clearPendingReleaseToInsertLatency()
             return
         }
 
@@ -959,6 +994,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             handleFnReleased()
         }
+    }
+
+    private func beginReleaseToInsertLatency(mode: String) {
+        pendingReleaseToInsertStartedAt = Date()
+        pendingReleaseToInsertMode = mode
+    }
+
+    private func clearPendingReleaseToInsertLatency() {
+        pendingReleaseToInsertStartedAt = nil
+        pendingReleaseToInsertMode = "dictate"
+    }
+
+    private func logReleaseToInsertLatencyIfNeeded() {
+        guard let startedAt = pendingReleaseToInsertStartedAt else { return }
+        let elapsedMs = max(0, Int(Date().timeIntervalSince(startedAt) * 1000))
+        let mode = pendingReleaseToInsertMode
+        clearPendingReleaseToInsertLatency()
+        AppLogStore.shared.record(
+            .info,
+            "STT release-to-insert",
+            metadata: [
+                "provider": dictation.activeSTTProviderLogValue,
+                "ms": "\(elapsedMs)",
+                "mode": mode,
+                "trigger": settings.shortcutTriggerKey.rawValue
+            ]
+        )
     }
 
     @MainActor
@@ -981,7 +1043,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let rewriteFieldContext = contextResolver.resolve()
         let rewriteMode = rewriteFieldContext.map { contextResolver.draftMode(for: $0) }
 
-        let (snapshot, copiedSelection) = await readSelectedTextFromFocusedApp()
+        let (snapshot, copiedSelection) = await readSelectedTextFromFocusedApp(copyDelayNanos: Constants.rewriteCopyDelayNanos)
         let focusedTextFallback = contextResolver.focusedTextForRewrite(maxLength: 9000) ?? ""
         let hasSavedQuickReplyContext = !quickReplyContextText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if !hasSavedQuickReplyContext {
@@ -990,11 +1052,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let shouldPrioritizeSavedContext = hasPendingQuickReplyContextRewrite && hasSavedQuickReplyContext
         let usesQuickReplyContext = shouldPrioritizeSavedContext || (copiedSelection.isEmpty && hasSavedQuickReplyContext)
         let usesFocusedTextFallback = !usesQuickReplyContext && copiedSelection.isEmpty && !focusedTextFallback.isEmpty
-        let sourceText: String = {
+        var sourceText: String = {
             if usesQuickReplyContext { return quickReplyContextText }
             if usesFocusedTextFallback { return focusedTextFallback }
             return copiedSelection
         }()
+        var usedSelectAllFallback = false
+        if sourceText.isEmpty && !usesQuickReplyContext && shouldUseSelectAllRewriteFallback(targetApp: targetApp) {
+            let fullDocumentText = await readAllTextFromFocusedAppBySelectingAll(copyDelayNanos: Constants.rewriteCopyDelayNanos)
+            if !fullDocumentText.isEmpty {
+                sourceText = fullDocumentText
+                usedSelectAllFallback = true
+                AppLogStore.shared.record(
+                    .info,
+                    "Rewrite used select-all fallback",
+                    metadata: [
+                        "chars": "\(fullDocumentText.count)",
+                        "bundle": targetApp.bundleIdentifier ?? "unknown"
+                    ]
+                )
+            }
+        }
         let contextIndicatesEmailReply = contextLooksLikeEmailReplyField(rewriteFieldContext) || textLooksLikeEmailThread(sourceText)
         let forcedEmailModeForQuickReply = usesQuickReplyContext &&
             (rewriteMode == nil || rewriteMode == .generic) &&
@@ -1049,7 +1127,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
 
-            writeStringToPasteboard(rewritten)
+            let textToInsert: String
+            if usedSelectAllFallback {
+                // Non-destructive fallback: collapse "Select All" before inserting.
+                sendRightArrow()
+                try? await Task.sleep(nanoseconds: Constants.rewriteCollapseSelectionDelayNanos)
+                textToInsert = rewritten.hasPrefix("\n") ? rewritten : "\n\n\(rewritten)"
+            } else {
+                textToInsert = rewritten
+            }
+
+            writeStringToPasteboard(textToInsert)
             sendCmdV()
             try? await Task.sleep(nanoseconds: Constants.rewritePasteDelayNanos)
             restorePasteboardSnapshot(snapshot)
@@ -1060,12 +1148,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if usesFocusedTextFallback {
                 AppLogStore.shared.record(.info, "Rewrite used focused text fallback", metadata: ["chars": "\(sourceText.count)"])
             }
+            if usedSelectAllFallback {
+                AppLogStore.shared.record(
+                    .info,
+                    "Rewrite inserted from select-all fallback",
+                    metadata: [
+                        "chars": "\(rewritten.count)",
+                        "mode": "non_destructive_append"
+                    ]
+                )
+            }
             print(
                 "✏️ rewrite done | chars:",
                 sourceText.count,
                 "->",
                 rewritten.count,
-                usesQuickReplyContext ? "(from saved context)" : (usesFocusedTextFallback ? "(from focused text)" : "")
+                usesQuickReplyContext
+                    ? "(from saved context)"
+                    : (usedSelectAllFallback ? "(from select-all fallback)" : (usesFocusedTextFallback ? "(from focused text)" : ""))
             )
         } catch {
             restorePasteboardSnapshot(snapshot)
@@ -1292,8 +1392,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         postKeyPress(CGKeyCode(kVK_ANSI_C), flags: .maskCommand)
     }
 
+    private func sendCmdA() {
+        postKeyPress(CGKeyCode(kVK_ANSI_A), flags: .maskCommand)
+    }
+
     private func sendCmdV() {
         postKeyPress(CGKeyCode(kVK_ANSI_V), flags: .maskCommand)
+    }
+
+    private func sendRightArrow() {
+        postKeyPress(CGKeyCode(kVK_RightArrow), flags: [])
+    }
+
+    @MainActor
+    private func readAllTextFromFocusedAppBySelectingAll(copyDelayNanos: UInt64) async -> String {
+        let sentinel = "__bluespeak_selection_all__\(UUID().uuidString)"
+        writeStringToPasteboard(sentinel)
+        sendCmdA()
+        try? await Task.sleep(nanoseconds: Constants.rewriteSelectAllDelayNanos)
+        sendCmdC()
+        try? await Task.sleep(nanoseconds: copyDelayNanos)
+        let copiedText = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if copiedText == sentinel {
+            return ""
+        }
+        return copiedText
+    }
+
+    private func shouldUseSelectAllRewriteFallback(targetApp: NSRunningApplication) -> Bool {
+        let bundle = (targetApp.bundleIdentifier ?? "").lowercased()
+        // Word frequently doesn't expose full AX value for focused docs.
+        if bundle == "com.microsoft.word" || bundle.hasPrefix("com.microsoft.word") {
+            return true
+        }
+        return false
     }
 
     private func postKeyPress(_ key: CGKeyCode, flags: CGEventFlags = []) {
@@ -1322,8 +1455,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func updateBackendMenuItem(online: Bool) {
         backendStatusItem?.title = online
-            ? "Backend: ✅ online"
-            : "Backend: ⚠️ offline"
+            ? menuUI("Backend: ✅ online", "Backend: ✅ online")
+            : menuUI("Backend: ⚠️ offline", "Backend: ⚠️ offline")
     }
 
     // MARK: - Status bar
@@ -1337,17 +1470,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func rebuildStatusMenu() {
         let menu = NSMenu()
 
-        let backendItem = NSMenuItem(title: "Sjekker backend…", action: nil, keyEquivalent: "")
+        let backendItem = NSMenuItem(title: menuUI("Sjekker backend…", "Checking backend…"), action: nil, keyEquivalent: "")
         backendStatusItem = backendItem
         menu.addItem(backendItem)
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(makeMenuItem(title: "Home", action: #selector(openHome)))
+        menu.addItem(makeMenuItem(title: menuUI("Hjem", "Home"), action: #selector(openHome)))
 
         menu.addItem(NSMenuItem.separator())
         if settings.statusMenuAdvancedModeEnabled {
-            menu.addItem(makeSectionHeader(title: "Preferences"))
-            let aiItem = makeMenuItem(title: "AI Polish: ON", action: #selector(toggleAI))
+            menu.addItem(makeSectionHeader(title: menuUI("Innstillinger", "Preferences")))
+            let aiItem = makeMenuItem(title: menuUI("AI Polish: PÅ", "AI Polish: ON"), action: #selector(toggleAI))
             menu.addItem(aiItem)
             aiMenuItem = aiItem
 
@@ -1355,20 +1488,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             menu.addItem(makeLanguagesRootMenuItem())
             menu.addItem(makeInterpretationRootMenuItem())
         } else {
-            menu.addItem(makeSectionHeader(title: "Quick"))
+            menu.addItem(makeSectionHeader(title: menuUI("Hurtig", "Quick")))
             menu.addItem(makeMicrophoneRootMenuItem())
             menu.addItem(makeLanguagesRootMenuItem())
             menu.addItem(makeAdvancedPreferencesRootMenuItem())
         }
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(makeSectionHeader(title: "Account"))
-        let signOutItem = makeMenuItem(title: "Sign out", action: #selector(signOut))
+        menu.addItem(makeSectionHeader(title: menuUI("Konto", "Account")))
+        let signOutItem = makeMenuItem(title: menuUI("Logg ut", "Sign out"), action: #selector(signOut))
         signOutMenuItem = signOutItem
         menu.addItem(signOutItem)
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(makeMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(makeMenuItem(title: menuUI("Avslutt", "Quit"), action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
         updateBackendMenuItem(online: backendOnline)
@@ -1401,10 +1534,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeAdvancedPreferencesRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Advanced", action: nil, keyEquivalent: "")
-        let advancedMenu = NSMenu(title: "Advanced")
+        let rootItem = NSMenuItem(title: menuUI("Avansert", "Advanced"), action: nil, keyEquivalent: "")
+        let advancedMenu = NSMenu(title: menuUI("Avansert", "Advanced"))
 
-        let aiItem = makeMenuItem(title: "AI Polish: ON", action: #selector(toggleAI))
+        let aiItem = makeMenuItem(title: menuUI("AI Polish: PÅ", "AI Polish: ON"), action: #selector(toggleAI))
         advancedMenu.addItem(aiItem)
         aiMenuItem = aiItem
 
@@ -1414,8 +1547,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeMicrophoneRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
-        let microphoneMenu = NSMenu(title: "Microphone")
+        let rootItem = NSMenuItem(title: menuUI("Mikrofon", "Microphone"), action: nil, keyEquivalent: "")
+        let microphoneMenu = NSMenu(title: menuUI("Mikrofon", "Microphone"))
         microphoneMenuItems.removeAll()
 
         for microphone in MicrophoneCatalog.availableOptions() {
@@ -1430,8 +1563,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeLanguagesRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Languages", action: nil, keyEquivalent: "")
-        let languagesMenu = NSMenu(title: "Languages")
+        let rootItem = NSMenuItem(title: menuUI("Språk", "Languages"), action: nil, keyEquivalent: "")
+        let languagesMenu = NSMenu(title: menuUI("Språk", "Languages"))
         languagesMenu.addItem(makeLanguageRootMenuItem())
         languagesMenu.addItem(makeTranslationRootMenuItem())
         rootItem.submenu = languagesMenu
@@ -1439,8 +1572,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeLanguageRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Input Language", action: nil, keyEquivalent: "")
-        let languageMenu = NSMenu(title: "Input Language")
+        let rootItem = NSMenuItem(title: menuUI("Inndataspråk", "Input Language"), action: nil, keyEquivalent: "")
+        let languageMenu = NSMenu(title: menuUI("Inndataspråk", "Input Language"))
         languageMenuItems.removeAll()
 
         for language in AppLanguage.allCases {
@@ -1455,8 +1588,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeInterpretationRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Forståelse", action: nil, keyEquivalent: "")
-        let interpretationMenu = NSMenu(title: "Forståelse")
+        let rootItem = NSMenuItem(title: menuUI("Forståelse", "Interpretation"), action: nil, keyEquivalent: "")
+        let interpretationMenu = NSMenu(title: menuUI("Forståelse", "Interpretation"))
         interpretationMenuItems.removeAll()
 
         for interpretationLevel in InterpretationLevel.allCases {
@@ -1472,8 +1605,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeTranslationRootMenuItem() -> NSMenuItem {
-        let rootItem = NSMenuItem(title: "Translate To", action: nil, keyEquivalent: "")
-        let translationMenu = NSMenu(title: "Translate To")
+        let rootItem = NSMenuItem(title: menuUI("Oversett til", "Translate To"), action: nil, keyEquivalent: "")
+        let translationMenu = NSMenu(title: menuUI("Oversett til", "Translate To"))
         translationMenuItems.removeAll()
 
         for language in AppLanguage.allCases {
@@ -1577,7 +1710,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func refreshAIMenuTitle() {
-        aiMenuItem?.title = dictation.aiEnabled ? "AI Polish: ON" : "AI Polish: OFF"
+        aiMenuItem?.title = dictation.aiEnabled
+            ? menuUI("AI Polish: PÅ", "AI Polish: ON")
+            : menuUI("AI Polish: AV", "AI Polish: OFF")
     }
 
     private func refreshMicrophoneMenuState() {
@@ -1589,7 +1724,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func refreshSignOutMenuState() {
         let authenticated = settings.hasAuthenticatedSession
-        signOutMenuItem?.title = authenticated ? "Sign out" : "Sign in"
+        signOutMenuItem?.title = authenticated
+            ? menuUI("Logg ut", "Sign out")
+            : menuUI("Logg inn", "Sign in")
         signOutMenuItem?.action = authenticated ? #selector(signOut) : #selector(openHome)
         signOutMenuItem?.isEnabled = true
     }

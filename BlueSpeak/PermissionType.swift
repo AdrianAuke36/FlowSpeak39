@@ -14,30 +14,46 @@ enum PermissionType {
     var message: String { details.message }
     var settingsURL: URL { details.settingsURL }
 
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        AppSettings.shared.ui(norwegian, english)
+    }
+
     private var details: Details {
         switch self {
         case .speechRecognition:
             return Details(
-                title: "Speech Recognition Permission Required",
-                message: "BlueSpeak needs speech recognition access to turn your voice into text. Enable it in System Settings, then try again.",
+                title: ui("Talegjenkjenning kreves", "Speech Recognition Permission Required"),
+                message: ui(
+                    "BlueSpeak trenger tilgang til talegjenkjenning for å gjøre stemmen din om til tekst. Aktiver dette i Systeminnstillinger, og prøv igjen.",
+                    "BlueSpeak needs speech recognition access to turn your voice into text. Enable it in System Settings, then try again."
+                ),
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!
             )
         case .microphone:
             return Details(
-                title: "Microphone Permission Required",
-                message: "BlueSpeak needs microphone access to record when you hold fn. Enable it in System Settings, then try again.",
+                title: ui("Mikrofontilgang kreves", "Microphone Permission Required"),
+                message: ui(
+                    "BlueSpeak trenger mikrofontilgang for å ta opp når du holder hovedtasten. Aktiver dette i Systeminnstillinger, og prøv igjen.",
+                    "BlueSpeak needs microphone access to record when you hold fn. Enable it in System Settings, then try again."
+                ),
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
             )
         case .accessibility:
             return Details(
-                title: "Accessibility Permission Required",
-                message: "BlueSpeak needs accessibility access to insert text into apps. Click below to enable it in System Settings.",
+                title: ui("Tilgjengelighet kreves", "Accessibility Permission Required"),
+                message: ui(
+                    "BlueSpeak trenger tilgjengelighetstilgang for å sette inn tekst i apper. Trykk under for å aktivere i Systeminnstillinger.",
+                    "BlueSpeak needs accessibility access to insert text into apps. Click below to enable it in System Settings."
+                ),
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
             )
         case .inputMonitoring:
             return Details(
-                title: "Input Monitoring Required",
-                message: "BlueSpeak needs input monitoring to detect the fn key. Click below to enable it in System Settings.",
+                title: ui("Inndataovervåking kreves", "Input Monitoring Required"),
+                message: ui(
+                    "BlueSpeak trenger inndataovervåking for å oppdage hovedtasten. Trykk under for å aktivere i Systeminnstillinger.",
+                    "BlueSpeak needs input monitoring to detect the fn key. Click below to enable it in System Settings."
+                ),
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
             )
         }
@@ -109,11 +125,13 @@ final class PermissionController {
     }
 
     private func firstBlockingPermissionForFnPress() -> PermissionType? {
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .denied, .restricted:
-            return .speechRecognition
-        default:
-            break
+        if AppSettings.shared.speechRecognitionRequiredForDictation {
+            switch SFSpeechRecognizer.authorizationStatus() {
+            case .denied, .restricted:
+                return .speechRecognition
+            default:
+                break
+            }
         }
 
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -143,9 +161,11 @@ final class PermissionController {
                     self?.show(type: .inputMonitoring)
                 }
             case .speechRecognition:
-                let status = SFSpeechRecognizer.authorizationStatus()
-                if status == .denied || status == .restricted {
-                    self?.show(type: .speechRecognition)
+                if AppSettings.shared.speechRecognitionRequiredForDictation {
+                    let status = SFSpeechRecognizer.authorizationStatus()
+                    if status == .denied || status == .restricted {
+                        self?.show(type: .speechRecognition)
+                    }
                 }
             case .microphone:
                 let status = AVCaptureDevice.authorizationStatus(for: .audio)
@@ -163,6 +183,8 @@ final class PermissionController {
 }
 
 struct PermissionView: View {
+    @ObservedObject private var settings = AppSettings.shared
+
     private enum Layout {
         static let cornerRadius: CGFloat = 20
         static let closeButtonSize: CGFloat = 24
@@ -177,6 +199,10 @@ struct PermissionView: View {
     let type: PermissionType
     let onOpenSettings: () -> Void
     let onDismiss: () -> Void
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
 
     var body: some View {
         ZStack {
@@ -233,7 +259,7 @@ struct PermissionView: View {
                 Spacer(minLength: 16)
 
                 Button(action: onOpenSettings) {
-                    Text("Open Settings")
+                    Text(ui("Åpne innstillinger", "Open Settings"))
                         .font(.system(size: 14, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .frame(height: Layout.buttonHeight)
