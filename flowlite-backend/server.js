@@ -2079,8 +2079,31 @@ function canonicalSignoffLine(line) {
   }
 }
 
+function stripLeadingGreetingPrefix(line) {
+  let out = String(line || "")
+    .trim()
+    .replace(/^(Hei|Hi|Hello|Dear)\b\s*,?\s*/i, "")
+    .trim();
+
+  // "Hei Thomas, kan du..." -> "kan du..."
+  out = out.replace(/^[A-Za-zÆØÅæøå][A-Za-zÆØÅæøå'\-]{0,40}\s*,\s*/i, "");
+
+  // "Hei Thomas kan du..." (no comma) -> "kan du..."
+  out = out.replace(
+    /^[A-Za-zÆØÅæøå][A-Za-zÆØÅæøå'\-]{0,40}\s+(?=(skal|kan|kunne|vil|har|hva|hvordan|hvor|hvem|hvilken|hvilke|when|what|why|how|can|could|would|will|do|did|are|is|should)\b)/i,
+    ""
+  );
+
+  return out.trim();
+}
+
 function isLikelyQuestionLine(line) {
-  return /^(skal|kan|kunne|vil|har|hva|hvordan|hvor|hvem|hvilken|hvilke|when|what|why|how|can|could|would|will|do|did|are|is|should)\b/i.test(String(line || "").trim());
+  const raw = String(line || "").trim();
+  if (!raw) return false;
+  const core = stripLeadingGreetingPrefix(raw);
+  if (!core) return false;
+
+  return /^(skal|kan|kunne|vil|har|hva|hvordan|hvor|hvem|hvilken|hvilke|when|what|why|how|can|could|would|will|do|did|are|is|should)\b/i.test(core);
 }
 
 function isLikelyNameLine(line) {
@@ -2156,8 +2179,9 @@ function normalizeEmailLineCasingAndPunctuation(text) {
     }
 
     let normalized = capitalizeFirstLetter(trimmed);
-    if (!/[.!?]$/.test(normalized) && isLikelyQuestionLine(normalized)) {
-      normalized += "?";
+    if (isLikelyQuestionLine(normalized)) {
+      normalized = normalized.replace(/[.!]+$/g, "").trimEnd();
+      if (!/\?$/.test(normalized)) normalized += "?";
     }
 
     out.push(normalized);
@@ -2200,6 +2224,29 @@ function normalizeEmailBody(text) {
     (_, g) => `${capitalizeFirstLetter(String(g || "").toLowerCase())},`
   );
 
+  // If greeting + body are on the same line and no recipient name is used,
+  // force standard email paragraph layout:
+  // "Hei, body..." -> "Hei,\n\nbody..."
+  out = out.replace(
+    /^(Hei|Hi|Hello|Dear)(\s+[^\n,!?]{1,80})?[ \t]*,[ \t]*([^\n][\s\S]*)$/i,
+    (_, greeting, maybeName = "", rest = "") => {
+      const greetingWord = capitalizeFirstLetter(String(greeting || "").toLowerCase());
+      const rawName = String(maybeName || "").trim();
+      const bodyRest = String(rest || "").trim();
+      if (!bodyRest) {
+        return rawName ? `${greetingWord} ${rawName},` : `${greetingWord},`;
+      }
+      if (rawName) {
+        const firstToken = rawName.split(/\s+/)[0] || "";
+        if (!isLikelyPersonNameToken(firstToken) || isGreetingWord(firstToken)) {
+          return `${greetingWord},\n\n${bodyRest}`;
+        }
+        return `${greetingWord} ${rawName},\n\n${bodyRest}`;
+      }
+      return `${greetingWord},\n\n${bodyRest}`;
+    }
+  );
+
   out = out.replace(
     /^(Hei|Hi|Hello)\s+([^\n,!?]+?)(?:,)?\s+(?=[^\n])/i,
     (full, g, name) => {
@@ -2213,6 +2260,13 @@ function normalizeEmailBody(text) {
   );
 
   out = out.replace(/^(Hei|Hi|Hello)\s+\1,?/i, (_, g) => `${g},`);
+
+  // If sign-off + name still ended up on one line, normalize to:
+  // body\n\nHilsen,\nName
+  out = out.replace(
+    /([^\n])\s+(Med vennlig hilsen|Vennlig hilsen|Hilsen|Mvh|Best regards|Regards|Best)\s*,?\s*([A-Za-zÆØÅæøå][^\n]{0,70})$/i,
+    (_, bodyEnd, signoff, name) => `${bodyEnd}\n\n${signoff},\n${String(name || "").trim().replace(/[.,;:!?]+$/, "")}`
+  );
 
   out = out.replace(
     /\s+(Med vennlig hilsen|Vennlig hilsen|Hilsen|Mvh|Best regards|Regards|Best)\s*/i,
@@ -2268,7 +2322,10 @@ function basicPolish(text) {
   if (/^[a-zæøå]/.test(out)) {
     out = out.charAt(0).toUpperCase() + out.slice(1);
   }
-  if (!/[.!?]$/.test(out)) {
+  if (isLikelyQuestionLine(out)) {
+    out = out.replace(/[.!]+$/g, "").trimEnd();
+    if (!/\?$/.test(out)) out += "?";
+  } else if (!/[.!?]$/.test(out)) {
     out += ".";
   }
   return out;
@@ -2389,7 +2446,7 @@ const DINNER_LIST_HEADING_EN_RE = "What we need for dinner:";
 const SHOPPING_LIST_HEADING_TRIGGER_RE = /\b(?:on\s+my\s+shopping\s+list|shopping\s*list|shoppinglist|grocery\s*list|for\s+dinner|hand(?:le)?list(?:e|en|a)|innkjøpsliste|til\s+middag|må\s+kjøpe|kjøp|buy|trenger\s+vi|vi\s+trenger|we\s+need|need)\b/i;
 const POINT_MARKER_RE = /\b(?:punkt|point)\s*(?:\d+|en|ett|to|tre|fire|fem|seks|sju|syv|åtte|ni|ti|one|two|three|four|five|six|seven|eight|nine|ten)\s*[:.)-]?\s*/ig;
 const PARENTHESIS_COMMAND_RE = /\b(?:åpen|open|start|venstre|left)\s+parentes\b|\b(?:lukk|lukk|slutt|close|høyre|right)\s+parentes\b|\b(?:i\s+parentes|in\s+parentheses)\b/i;
-const SPOKEN_PUNCTUATION_HINT_RE = /\b(?:skråstrek|skraastrek|slash|slahs|slashtegn|backslash|bakoverstrek|komma|comma|punktum|period|full\s*stop|kolon|colon|semikolon|semicolon|utropstegn|exclamation\s*(?:mark|point)|spørsmålstegn|sporsmalstegn|question\s*mark|apostrof|apostrophe|anførselstegn|anforselstegn|sitattegn|quotation\s*mark|quote|bindestrek|hyphen|dash|en\s*dash|em\s*dash|ellipse|ellipsis|tre\s+prikker|three\s+dots|parentes|parenthesis|bracket|brace|krøllparentes|krollparentes)\b/i;
+const SPOKEN_PUNCTUATION_HINT_RE = /\b(?:skråstrek|skraastrek|slash|slahs|slashtegn|backslash|bakoverstrek|komma|comma|punktum|period|full\s*stop|kolon|colon|semikolon|semicolon|utropstegn|exclamation\s*(?:mark|point)|spørsmålstegn|sporsmalstegn|question\s*mark|apostrof|apostrophe|anførselstegn|anforselstegn|sitattegn|hermetegn|gåseøyne|gaaseoyne|quotation\s*mark|quote|bindestrek|hyphen|dash|en\s*dash|em\s*dash|ellipse|ellipsis|tre\s+prikker|three\s+dots|parentes|parenthesis|bracket|brace|krøllparentes|krollparentes)\b/i;
 const SPOKEN_EMOJI_ALIASES = [
   { pattern: /\b(?:emoji\s+)?smilefjes\b/gi, emoji: "🙂" },
   { pattern: /\b(?:emoji\s+)?smiley\b/gi, emoji: "🙂" },
@@ -2414,7 +2471,7 @@ const SPOKEN_PUNCTUATION_ALIASES = [
   { pattern: /\b(?:utropstegn|exclamation\s*(?:mark|point))\b/gi, mark: "!" },
   { pattern: /\b(?:spørsmålstegn|sporsmalstegn|question\s*mark)\b/gi, mark: "?" },
   { pattern: /\b(?:apostrof|apostrophe)\b/gi, mark: "'" },
-  { pattern: /\b(?:anførselstegn|anforselstegn|sitattegn|quotation\s*mark|quote)\b/gi, mark: "\"" },
+  { pattern: /\b(?:anførselstegn|anforselstegn|sitattegn|hermetegn|gåseøyne|gaaseoyne|quotation\s*mark|quote)\b/gi, mark: "\"" },
   { pattern: /\b(?:bindestrek|hyphen)\b/gi, mark: "-" },
   { pattern: /\b(?:dash|en\s*dash|em\s*dash)\b/gi, mark: " – " },
   { pattern: /\b(?:ellipse|ellipsis|tre\s+prikker|three\s+dots)\b/gi, mark: "…" },
@@ -4061,7 +4118,7 @@ async function handleRewrite(body, requestSignal) {
       ? "The spoken instruction is very brief. Keep the reply concise and express only that point without elaboration."
       : "";
     const singleDraftRule = "Return exactly one final draft only. Never include alternatives, notes, prefixes, or placeholders.";
-    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. Convert spoken emoji words like 'smilefjes' to emoji only when those words are explicitly spoken. Never add emoji unless explicitly requested or already present in the source text. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
+    const spokenFormattingRule = "Respect explicit formatting instructions and spoken formatting words. Convert spoken emoji words like 'smilefjes' to emoji only when those words are explicitly spoken. Never add emoji unless explicitly requested or already present in the source text. Convert spoken punctuation words (for example slash/slahs, comma/komma, punktum/period, hermetegn/gåseøyne) into punctuation symbols. Apply requested parentheses and remove command words once formatting is applied.";
     const memoryRule = replyMemories.length
       ? "If any reply memory is relevant, treat it as the user's standing preference for how to answer. If a memory includes saved incoming message context, use it as background for drafting a complete reply. Use the memory to shape the final reply naturally, but do not quote it word-for-word unless that is clearly the best response."
       : "";

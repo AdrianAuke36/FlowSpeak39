@@ -22,9 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private enum Constants {
         static let backendPollIntervalNanos: UInt64 = 15_000_000_000
+        static let startupPrewarmDelayNanos: UInt64 = 750_000_000
         static let rewriteCopyDelayNanos: UInt64 = 170_000_000
-        static let rewriteSelectAllDelayNanos: UInt64 = 90_000_000
-        static let rewriteCollapseSelectionDelayNanos: UInt64 = 70_000_000
         static let quickReplyCopyDelayNanos: UInt64 = 260_000_000
         static let quickReplyWaitReleaseStepNanos: UInt64 = 35_000_000
         static let quickReplyWaitReleaseMaxSteps: Int = 8
@@ -138,6 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         Task { await self.pollBackendHealth() }
+        Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: Constants.startupPrewarmDelayNanos)
+            self.dictation.prewarmLocalCapturePipeline()
+            await AIClient.shared.prewarmDraftPipelineIfNeeded()
+        }
 
         DispatchQueue.main.async { [weak self] in
             self?.configureHomeWindowBehavior()
@@ -820,9 +825,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let axSelection = contextResolver
             .selectedTextForQuickReply(maxLength: 9000)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let focusedFallback = contextResolver
-            .focusedTextForRewrite(maxLength: 9000)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let chosenText: String
         let source: String
         if !trimmedSelection.isEmpty {
@@ -831,9 +833,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if !axSelection.isEmpty {
             chosenText = axSelection
             source = "selection_ax"
-        } else if !focusedFallback.isEmpty {
-            chosenText = focusedFallback
-            source = "focused"
         } else {
             chosenText = ""
             source = "none"
@@ -1044,35 +1043,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let rewriteMode = rewriteFieldContext.map { contextResolver.draftMode(for: $0) }
 
         let (snapshot, copiedSelection) = await readSelectedTextFromFocusedApp(copyDelayNanos: Constants.rewriteCopyDelayNanos)
-        let focusedTextFallback = contextResolver.focusedTextForRewrite(maxLength: 9000) ?? ""
         let hasSavedQuickReplyContext = !quickReplyContextText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if !hasSavedQuickReplyContext {
             hasPendingQuickReplyContextRewrite = false
         }
         let shouldPrioritizeSavedContext = hasPendingQuickReplyContextRewrite && hasSavedQuickReplyContext
         let usesQuickReplyContext = shouldPrioritizeSavedContext || (copiedSelection.isEmpty && hasSavedQuickReplyContext)
-        let usesFocusedTextFallback = !usesQuickReplyContext && copiedSelection.isEmpty && !focusedTextFallback.isEmpty
-        var sourceText: String = {
+        let sourceText: String = {
             if usesQuickReplyContext { return quickReplyContextText }
-            if usesFocusedTextFallback { return focusedTextFallback }
             return copiedSelection
         }()
-        var usedSelectAllFallback = false
-        if sourceText.isEmpty && !usesQuickReplyContext && shouldUseSelectAllRewriteFallback(targetApp: targetApp) {
-            let fullDocumentText = await readAllTextFromFocusedAppBySelectingAll(copyDelayNanos: Constants.rewriteCopyDelayNanos)
-            if !fullDocumentText.isEmpty {
-                sourceText = fullDocumentText
-                usedSelectAllFallback = true
-                AppLogStore.shared.record(
-                    .info,
-                    "Rewrite used select-all fallback",
-                    metadata: [
-                        "chars": "\(fullDocumentText.count)",
-                        "bundle": targetApp.bundleIdentifier ?? "unknown"
-                    ]
-                )
-            }
-        }
         let contextIndicatesEmailReply = contextLooksLikeEmailReplyField(rewriteFieldContext) || textLooksLikeEmailThread(sourceText)
         let forcedEmailModeForQuickReply = usesQuickReplyContext &&
             (rewriteMode == nil || rewriteMode == .generic) &&
@@ -1094,7 +1074,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard !sourceText.isEmpty else {
             restorePasteboardSnapshot(snapshot)
-            presentRewriteError("No text found. Highlight text, save context with \(settings.shortcutTriggerKey.saveReplyContextShortcut), or place cursor in a text field with existing content.")
+            presentRewriteError("No text found. Highlight text first, or save selected text with \(settings.shortcutTriggerKey.saveReplyContextShortcut).")
             return
         }
 
@@ -1128,14 +1108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             let textToInsert: String
-            if usedSelectAllFallback {
-                // Non-destructive fallback: collapse "Select All" before inserting.
-                sendRightArrow()
-                try? await Task.sleep(nanoseconds: Constants.rewriteCollapseSelectionDelayNanos)
-                textToInsert = rewritten.hasPrefix("\n") ? rewritten : "\n\n\(rewritten)"
-            } else {
-                textToInsert = rewritten
-            }
+            textToInsert = rewritten
 
             writeStringToPasteboard(textToInsert)
             sendCmdV()
@@ -1145,27 +1118,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 quickReplyContextText = ""
                 hasPendingQuickReplyContextRewrite = false
             }
-            if usesFocusedTextFallback {
-                AppLogStore.shared.record(.info, "Rewrite used focused text fallback", metadata: ["chars": "\(sourceText.count)"])
-            }
-            if usedSelectAllFallback {
-                AppLogStore.shared.record(
-                    .info,
-                    "Rewrite inserted from select-all fallback",
-                    metadata: [
-                        "chars": "\(rewritten.count)",
-                        "mode": "non_destructive_append"
-                    ]
-                )
-            }
             print(
                 "✏️ rewrite done | chars:",
                 sourceText.count,
                 "->",
                 rewritten.count,
-                usesQuickReplyContext
-                    ? "(from saved context)"
-                    : (usedSelectAllFallback ? "(from select-all fallback)" : (usesFocusedTextFallback ? "(from focused text)" : ""))
+                usesQuickReplyContext ? "(from saved context)" : ""
             )
         } catch {
             restorePasteboardSnapshot(snapshot)
@@ -1392,41 +1350,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         postKeyPress(CGKeyCode(kVK_ANSI_C), flags: .maskCommand)
     }
 
-    private func sendCmdA() {
-        postKeyPress(CGKeyCode(kVK_ANSI_A), flags: .maskCommand)
-    }
-
     private func sendCmdV() {
         postKeyPress(CGKeyCode(kVK_ANSI_V), flags: .maskCommand)
-    }
-
-    private func sendRightArrow() {
-        postKeyPress(CGKeyCode(kVK_RightArrow), flags: [])
-    }
-
-    @MainActor
-    private func readAllTextFromFocusedAppBySelectingAll(copyDelayNanos: UInt64) async -> String {
-        let sentinel = "__bluespeak_selection_all__\(UUID().uuidString)"
-        writeStringToPasteboard(sentinel)
-        sendCmdA()
-        try? await Task.sleep(nanoseconds: Constants.rewriteSelectAllDelayNanos)
-        sendCmdC()
-        try? await Task.sleep(nanoseconds: copyDelayNanos)
-        let copiedText = NSPasteboard.general.string(forType: .string)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if copiedText == sentinel {
-            return ""
-        }
-        return copiedText
-    }
-
-    private func shouldUseSelectAllRewriteFallback(targetApp: NSRunningApplication) -> Bool {
-        let bundle = (targetApp.bundleIdentifier ?? "").lowercased()
-        // Word frequently doesn't expose full AX value for focused docs.
-        if bundle == "com.microsoft.word" || bundle.hasPrefix("com.microsoft.word") {
-            return true
-        }
-        return false
     }
 
     private func postKeyPress(_ key: CGKeyCode, flags: CGEventFlags = []) {

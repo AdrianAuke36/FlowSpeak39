@@ -115,6 +115,19 @@ final class DictationController: NSObject {
         activeSTTProvider.providerLogValue
     }
 
+    func prewarmLocalCapturePipeline() {
+        guard !isCaptureActive else { return }
+        let localeIdentifier = speechLocaleIdentifier
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard !self.isCaptureActive else { return }
+            _ = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier))
+                ?? SFSpeechRecognizer(locale: Locale(identifier: SpeechConfig.fallbackLocale))
+            _ = self.audioEngine.inputNode.outputFormat(forBus: 0)
+            self.audioEngine.prepare()
+        }
+    }
+
     func prefetchContext() {
         prefetchedContext = resolver.resolve()
     }
@@ -779,7 +792,7 @@ final class DictationController: NSObject {
             (#"\b(?:utropstegn|exclamation\s*(?:mark|point))\b"#, "!"),
             (#"\b(?:spørsmålstegn|sporsmalstegn|question\s*mark)\b"#, "?"),
             (#"\b(?:apostrof|apostrophe)\b"#, "'"),
-            (#"\b(?:anførselstegn|anforselstegn|sitattegn|quotation\s*mark|quote)\b"#, "\""),
+            (#"\b(?:anførselstegn|anforselstegn|sitattegn|hermetegn|gåseøyne|gaaseoyne|quotation\s*mark|quote)\b"#, "\""),
             (#"\b(?:bindestrek|hyphen)\b"#, "-"),
             (#"\b(?:dash|en\s*dash|em\s*dash)\b"#, " – "),
             (#"\b(?:ellipse|ellipsis|tre\s+prikker|three\s+dots)\b"#, "…"),
@@ -1122,10 +1135,12 @@ final class DictationController: NSObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if out.isEmpty { return out }
 
+        out = normalizeInlineGreetingParagraph(out)
         out = replacingMatches(in: out, using: EmailBodyRegex.greeting, with: "$1 $2,\n\n")
         out = replacingMatches(in: out, using: EmailBodyRegex.splitSignoffEN, with: "$1 $2")
         out = replacingMatches(in: out, using: EmailBodyRegex.splitSignoffNO, with: "$1 $2")
         out = replacingMatches(in: out, using: EmailBodyRegex.inlineSignoff, with: "\n\n$1 ")
+        out = replacingMatches(in: out, using: EmailBodyRegex.inlineSignoffWithNameAtEnd, with: "$1\n\n$2,\n$3")
         out = replacingMatches(in: out, using: EmailBodyRegex.inlineSignoffAtEnd, with: "\n\n$1,")
         out = replacingMatches(in: out, using: EmailBodyRegex.signoffAtEnd, with: "\n\n$1,\n$2")
         out = replacingMatches(in: out, using: EmailBodyRegex.signoffNoNameAtEnd, with: "\n\n$1,")
@@ -1138,6 +1153,48 @@ final class DictationController: NSObject {
         out = normalizeEmailLineCasingAndPunctuation(out)
 
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizeInlineGreetingParagraph(_ text: String) -> String {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"^(Hei|Hi|Hello|Dear)(\s+[^\n,!?]{1,80})?[ \t]*,[ \t]*([^\n][\s\S]*)$"#,
+            options: [.caseInsensitive]
+        ) else {
+            return text
+        }
+
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: nsRange),
+              let greetingRange = Range(match.range(at: 1), in: text),
+              let bodyRange = Range(match.range(at: 3), in: text) else {
+            return text
+        }
+
+        let greetingWord = capitalizeFirstLetter(String(text[greetingRange]).lowercased())
+        let rawName: String = {
+            guard let nameRange = Range(match.range(at: 2), in: text) else { return "" }
+            return String(text[nameRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+        let body = String(text[bodyRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.isEmpty {
+            return rawName.isEmpty ? "\(greetingWord)," : "\(greetingWord) \(rawName),"
+        }
+
+        if rawName.isEmpty {
+            return "\(greetingWord),\n\n\(body)"
+        }
+
+        let firstToken = rawName.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+        let loweredToken = firstToken.lowercased()
+        let invalidNameTokens: Set<String> = [
+            "skal", "kan", "kunne", "vil", "har", "hva", "hvordan", "hvor", "hvem", "hvilken", "hvilke",
+            "when", "what", "why", "how", "do", "did", "are", "is", "should", "could", "would", "will"
+        ]
+        if invalidNameTokens.contains(loweredToken) {
+            return "\(greetingWord),\n\n\(body)"
+        }
+
+        return "\(greetingWord) \(rawName),\n\n\(body)"
     }
 
     private func normalizeEmailLineCasingAndPunctuation(_ text: String) -> String {
@@ -1178,8 +1235,15 @@ final class DictationController: NSObject {
             }
 
             var normalized = capitalizeFirstLetter(trimmed)
-            if !hasTerminalPunctuation(normalized) && isLikelyQuestionLine(normalized) {
-                normalized += "?"
+            if isLikelyQuestionLine(normalized) {
+                normalized = normalized.replacingOccurrences(
+                    of: #"[.!]+$"#,
+                    with: "",
+                    options: .regularExpression
+                )
+                if !normalized.hasSuffix("?") {
+                    normalized += "?"
+                }
             }
 
             outLines.append(normalized)
@@ -1239,10 +1303,38 @@ final class DictationController: NSObject {
     }
 
     private func isLikelyQuestionLine(_ line: String) -> Bool {
-        line.range(
+        let core = stripLeadingGreetingPrefix(line)
+        return core.range(
             of: #"^(skal|kan|kunne|vil|har|hva|hvordan|hvor|hvem|hvilken|hvilke|when|what|why|how|can|could|would|will|do|did|are|is|should)\b"#,
             options: [.regularExpression, .caseInsensitive]
         ) != nil
+    }
+
+    private func stripLeadingGreetingPrefix(_ line: String) -> String {
+        var out = line
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(
+                of: #"^(Hei|Hi|Hello|Dear)\b\s*,?\s*"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // "Hei Thomas, kan du..." -> "kan du..."
+        out = out.replacingOccurrences(
+            of: #"^[A-Za-zÆØÅæøå][A-Za-zÆØÅæøå'\-]{0,40}\s*,\s*"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        // "Hei Thomas kan du..." (uten komma) -> "kan du..."
+        out = out.replacingOccurrences(
+            of: #"^[A-Za-zÆØÅæøå][A-Za-zÆØÅæøå'\-]{0,40}\s+(?=(skal|kan|kunne|vil|har|hva|hvordan|hvor|hvem|hvilken|hvilke|when|what|why|how|can|could|would|will|do|did|are|is|should)\b)"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func isLikelyNameLine(_ line: String) -> Bool {
@@ -1974,7 +2066,12 @@ final class DictationController: NSObject {
         if let first = s.first, first.isLowercase {
             s.replaceSubrange(s.startIndex...s.startIndex, with: String(first).uppercased())
         }
-        if let last = s.last, ".!?".contains(last) == false {
+        if isLikelyQuestionLine(s) {
+            s = s.replacingOccurrences(of: #"[.!]+$"#, with: "", options: .regularExpression)
+            if !s.hasSuffix("?") {
+                s += "?"
+            }
+        } else if let last = s.last, ".!?".contains(last) == false {
             s += "."
         }
         return s
@@ -1997,6 +2094,10 @@ private enum EmailBodyRegex {
     )
     static let inlineSignoff = compile(
         #"\s+(Med vennlig hilsen|Vennlig hilsen|Kind regards|Best regards|Sincerely|Hilsen|Mvh|Regards)\s+"#,
+        options: [.caseInsensitive]
+    )
+    static let inlineSignoffWithNameAtEnd = compile(
+        #"([^\n])\s+(Med vennlig hilsen|Vennlig hilsen|Kind regards|Best regards|Sincerely|Hilsen|Mvh|Regards|Best)\s*,?\s*([A-Za-zÆØÅæøå][^\n]{0,70})$"#,
         options: [.caseInsensitive]
     )
     static let inlineSignoffAtEnd = compile(

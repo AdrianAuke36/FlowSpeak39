@@ -104,6 +104,7 @@ final class AIClient {
     var interpretationLevel: InterpretationLevel = .balanced
 
     private let session: URLSession
+    private var didAttemptDraftPrewarm: Bool = false
 
     private init() {
         let cfg = URLSessionConfiguration.ephemeral
@@ -140,6 +141,34 @@ final class AIClient {
         } catch {
             return false
         }
+    }
+
+    func prewarmDraftPipelineIfNeeded() async {
+        if didAttemptDraftPrewarm { return }
+        didAttemptDraftPrewarm = true
+
+        await ensureFreshBackendTokenIfNeeded()
+        guard let url = URL(string: "\(baseURLString)\(Endpoint.polish)") else { return }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = Timeout.healthRequest
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("1", forHTTPHeaderField: "x-fastpath-bypass")
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        applyAuthorizationHeader(to: &req)
+
+        let body = makePolishRequestBody(
+            text: "warmup",
+            mode: .generic,
+            ctx: nil,
+            targetLanguage: resolvedTargetLanguage(from: nil),
+            targetLanguageForced: false
+        )
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body, options: []) else { return }
+        req.httpBody = bodyData
+
+        _ = try? await session.data(for: req)
     }
 
     func draft(
