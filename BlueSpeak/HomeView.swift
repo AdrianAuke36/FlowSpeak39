@@ -138,8 +138,11 @@ struct HomeView: View {
             }
         }
         .onChange(of: settings.hasAuthenticatedSession) { _, isAuthenticated in
-            if !isAuthenticated && settings.consumePendingSignedOutPopup() {
-                showSignedOutPopup = true
+            if !isAuthenticated {
+                GamificationStore.shared.reset()
+                if settings.consumePendingSignedOutPopup() {
+                    showSignedOutPopup = true
+                }
             }
         }
     }
@@ -1754,11 +1757,55 @@ private extension SetupOnboardingStep {
     }
 }
 
+@MainActor
+final class GamificationStore: ObservableObject {
+    static let shared = GamificationStore()
+
+    @Published private(set) var snapshot: GamificationSnapshot?
+    @Published private(set) var isLoading: Bool = false
+    @Published private(set) var lastRefreshAt: Date?
+    @Published private(set) var lastError: String?
+
+    private let minimumRefreshInterval: TimeInterval = 2.5
+    private var lastAttemptAt: Date = .distantPast
+
+    private init() {}
+
+    func refresh(force: Bool = false) async {
+        if isLoading { return }
+        let now = Date()
+        if !force && now.timeIntervalSince(lastAttemptAt) < minimumRefreshInterval {
+            return
+        }
+
+        lastAttemptAt = now
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let value = try await AIClient.shared.fetchGamification()
+            snapshot = value
+            lastRefreshAt = Date()
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func reset() {
+        snapshot = nil
+        lastError = nil
+        lastRefreshAt = nil
+        lastAttemptAt = .distantPast
+    }
+}
+
 // MARK: - Sidebar
 
 struct Sidebar: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var history = DictationHistory.shared
+    @StateObject private var gamification = GamificationStore.shared
     @Binding var activePage: HomeView.Page
     let onUpgradeTap: () -> Void
 
@@ -1918,6 +1965,15 @@ struct Sidebar: View {
                         .fill(AppTheme.sidebar.opacity(0.5))
                 )
         )
+        .onAppear {
+            Task { await gamification.refresh(force: true) }
+        }
+        .onReceive(history.$entries) { _ in
+            Task { await gamification.refresh(force: false) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await gamification.refresh(force: false) }
+        }
     }
 
     private var primaryPages: [HomeView.Page] {
@@ -1985,16 +2041,21 @@ struct Sidebar: View {
     }
 
     private var displayedWordsUsedToday: Int {
-        min(history.todayWordCount, Self.freeDailyWordLimit)
+        min(wordsUsedToday, Self.freeDailyWordLimit)
     }
 
     private var freeWordsRemaining: Int {
-        max(0, Self.freeDailyWordLimit - history.todayWordCount)
+        max(0, Self.freeDailyWordLimit - wordsUsedToday)
     }
 
     private var freeUsageProgress: Double {
         guard Self.freeDailyWordLimit > 0 else { return 0 }
-        return min(max(Double(history.todayWordCount) / Double(Self.freeDailyWordLimit), 0), 1)
+        return min(max(Double(wordsUsedToday) / Double(Self.freeDailyWordLimit), 0), 1)
+    }
+
+    private var wordsUsedToday: Int {
+        let remote = gamification.snapshot?.today.wordsCount ?? 0
+        return max(remote, history.todayWordCount)
     }
 
     private var wordsLeftLabel: String {
@@ -2079,6 +2140,7 @@ struct SidebarItem: View {
 struct MainPage: View {
     @ObservedObject private var history = DictationHistory.shared
     @ObservedObject private var settings = AppSettings.shared
+    @StateObject private var gamification = GamificationStore.shared
 
     private func ui(_ norwegian: String, _ english: String) -> String {
         settings.ui(norwegian, english)
@@ -2119,8 +2181,12 @@ struct MainPage: View {
 
                 HStack(spacing: 12) {
                     SimpleStatCard(title: ui("Dagsstreak", "Day streak"), value: streakLabel)
-                    SimpleStatCard(title: ui("Ord i dag", "Words today"), value: "\(history.todayWordCount)")
-                    SimpleStatCard(title: ui("Tid spart i dag", "Time saved today"), value: TimeSaved.formatted(for: history.todayWordCount))
+                    SimpleStatCard(title: ui("Nivå", "Level"), value: "Lv \(currentLevel)")
+                    SimpleStatCard(title: ui("Tid spart i dag", "Time saved today"), value: TimeSaved.formatted(for: wordsToday))
+                }
+
+                if let missions = gamification.snapshot?.missions {
+                    DailyMissionsCard(missions: missions)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -2144,11 +2210,33 @@ struct MainPage: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(AppTheme.canvas)
+        .onAppear {
+            Task { await gamification.refresh(force: true) }
+        }
+        .onReceive(history.$entries) { _ in
+            Task { await gamification.refresh(force: false) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await gamification.refresh(force: false) }
+        }
     }
 
     private var streakLabel: String {
-        let days = history.entries.isEmpty ? 0 : 1
-        return settings.ui("\(days) dag", "\(days) day")
+        let fallback = history.entries.isEmpty ? 0 : 1
+        let days = max(0, gamification.snapshot?.profile.streakDays ?? fallback)
+        if days == 1 {
+            return settings.ui("1 dag", "1 day")
+        }
+        return settings.ui("\(days) dager", "\(days) days")
+    }
+
+    private var currentLevel: Int {
+        max(1, gamification.snapshot?.profile.level ?? 1)
+    }
+
+    private var wordsToday: Int {
+        let remote = gamification.snapshot?.today.wordsCount ?? 0
+        return max(remote, history.todayWordCount)
     }
 
     private var recentEntries: [DictationEntry] {
@@ -2226,6 +2314,75 @@ struct SimpleStatCard: View {
                         .strokeBorder(AppTheme.border, lineWidth: 1)
                 )
         )
+    }
+}
+
+struct DailyMissionsCard: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let missions: GamificationMissions
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text(ui("Dagens mål", "Daily missions"))
+                    .font(.system(size: 22, weight: .bold, design: .serif))
+                    .foregroundStyle(AppTheme.primaryText)
+
+                Spacer()
+
+                Text("\(missions.completedCount)/\(max(1, missions.totalCount))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+
+            ProgressView(value: progressValue)
+                .progressViewStyle(.linear)
+                .tint(AppTheme.accent)
+
+            VStack(spacing: 8) {
+                ForEach(missions.items) { item in
+                    HStack(spacing: 10) {
+                        Image(systemName: item.completed ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(item.completed ? AppTheme.success : AppTheme.secondaryText)
+
+                        Text(localizedMissionTitle(for: item))
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AppTheme.primaryText)
+
+                        Spacer(minLength: 8)
+
+                        Text("\(item.current)/\(item.target)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .cardSurface()
+    }
+
+    private var progressValue: Double {
+        guard missions.totalCount > 0 else { return 0 }
+        return min(max(Double(missions.completedCount) / Double(missions.totalCount), 0), 1)
+    }
+
+    private func localizedMissionTitle(for mission: GamificationMissionItem) -> String {
+        switch mission.id {
+        case "words":
+            return ui("Dikter ord", "Dictate words")
+        case "dictate":
+            return ui("Fullfør dikteringer", "Complete dictations")
+        case "transform":
+            return ui("Oversett eller rewrite", "Translate or rewrite")
+        default:
+            return mission.title
+        }
     }
 }
 

@@ -12,6 +12,53 @@ struct RewriteResponse: Decodable {
     let text: String
 }
 
+struct GamificationMissionItem: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let current: Int
+    let target: Int
+    let completed: Bool
+}
+
+struct GamificationMissions: Decodable {
+    let completed: Bool
+    let completedCount: Int
+    let totalCount: Int
+    let items: [GamificationMissionItem]
+}
+
+struct GamificationProfile: Decodable {
+    let principalKey: String
+    let plan: String
+    let xp: Int
+    let level: Int
+    let streakDays: Int
+    let longestStreakDays: Int
+    let coins: Int
+    let lastActivityDay: String?
+}
+
+struct GamificationToday: Decodable {
+    let dayKey: String
+    let principalKey: String
+    let plan: String
+    let wordsCount: Int
+    let dictateCount: Int
+    let translateCount: Int
+    let rewriteCount: Int
+    let challengesCompleted: Int
+    let xpEarned: Int
+}
+
+struct GamificationSnapshot: Decodable {
+    let tag: String?
+    let source: String
+    let profile: GamificationProfile
+    let today: GamificationToday
+    let missions: GamificationMissions
+    let generatedAt: String
+}
+
 enum AIClientError: LocalizedError {
     case invalidURL
     case badStatus(Int, String)
@@ -35,6 +82,7 @@ final class AIClient {
         static let health = "/health"
         static let ready = "/ready"
         static let version = "/version"
+        static let gamification = "/gamification"
         static let polish = "/polish"
         static let rewrite = "/rewrite"
     }
@@ -227,6 +275,39 @@ final class AIClient {
             let out = decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if out.isEmpty { throw AIClientError.emptyResponse }
             return RewriteResponse(language: decoded.language, text: out)
+        } catch is CancellationError {
+            throw AIClientError.cancelled
+        } catch let urlErr as URLError where urlErr.code == .cancelled {
+            throw AIClientError.cancelled
+        } catch {
+            throw AIClientError.transport(error.localizedDescription)
+        }
+    }
+
+    func fetchGamification() async throws -> GamificationSnapshot {
+        await ensureFreshBackendTokenIfNeeded()
+        guard let url = URL(string: "\(baseURLString)\(Endpoint.gamification)") else {
+            throw AIClientError.invalidURL
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.timeoutInterval = Timeout.healthRequest
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        applyAuthorizationHeader(to: &req)
+
+        do {
+            let (data, resp) = try await session.data(for: req)
+            guard let http = resp as? HTTPURLResponse else {
+                throw AIClientError.transport("No HTTP response")
+            }
+
+            if !(200...299).contains(http.statusCode) {
+                let bodyText = String(data: data, encoding: .utf8) ?? ""
+                throw AIClientError.badStatus(http.statusCode, bodyText)
+            }
+
+            return try JSONDecoder().decode(GamificationSnapshot.self, from: data)
         } catch is CancellationError {
             throw AIClientError.cancelled
         } catch let urlErr as URLError where urlErr.code == .cancelled {

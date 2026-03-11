@@ -105,9 +105,19 @@ const DAILY_USAGE_MAX_AUTH_TEAM = Math.max(0, Number(process.env.DAILY_USAGE_MAX
 const DAILY_USAGE_MAX_AUTH_ENTERPRISE = Math.max(0, Number(process.env.DAILY_USAGE_MAX_AUTH_ENTERPRISE || 25_000));
 const DAILY_USAGE_SUPABASE_ENABLED = SUPABASE_REST_URL.length > 0 && SUPABASE_SERVICE_ROLE_KEY.length > 0;
 const DAILY_USAGE_SUPABASE_RETRY_MAX = Math.max(1, Number(process.env.DAILY_USAGE_SUPABASE_RETRY_MAX || 4));
+const GAMIFICATION_ENABLED = String(process.env.GAMIFICATION_ENABLED || "true").toLowerCase() !== "false";
+const GAMIFICATION_SUPABASE_ENABLED = GAMIFICATION_ENABLED && SUPABASE_REST_URL.length > 0 && SUPABASE_SERVICE_ROLE_KEY.length > 0;
+const GAMIFICATION_PROFILES_TABLE = String(process.env.GAMIFICATION_PROFILES_TABLE || "gamification_profiles").trim() || "gamification_profiles";
+const GAMIFICATION_DAILY_TABLE = String(process.env.GAMIFICATION_DAILY_TABLE || "gamification_daily_progress").trim() || "gamification_daily_progress";
+const GAMIFICATION_RPC_RECORD_EVENT = String(process.env.GAMIFICATION_RPC_RECORD_EVENT || "gamification_record_event").trim() || "gamification_record_event";
+const GAMIFICATION_MISSION_WORDS = Math.max(20, Number(process.env.GAMIFICATION_MISSION_WORDS || 120));
+const GAMIFICATION_MISSION_DICTATE = Math.max(1, Number(process.env.GAMIFICATION_MISSION_DICTATE || 3));
+const GAMIFICATION_MISSION_TRANSFORM = Math.max(1, Number(process.env.GAMIFICATION_MISSION_TRANSFORM || 1));
 const TRUSTED_PROXY_IPS = parseListEnv(process.env.TRUSTED_PROXY_IPS || "");
 const RATE_LIMIT_BUCKETS = new Map();
 const DAILY_USAGE_BUCKETS = new Map();
+const GAMIFICATION_PROFILE_BUCKETS = new Map();
+const GAMIFICATION_DAILY_BUCKETS = new Map();
 const RATE_LIMIT_REDIS_URL = String(process.env.RATE_LIMIT_REDIS_URL || process.env.UPSTASH_REDIS_REST_URL || "").trim().replace(/\/+$/, "");
 const RATE_LIMIT_REDIS_TOKEN = String(process.env.RATE_LIMIT_REDIS_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
 const RATE_LIMIT_REDIS_PREFIX = String(process.env.RATE_LIMIT_REDIS_PREFIX || "flowspeak:rl").trim() || "flowspeak:rl";
@@ -575,6 +585,338 @@ async function consumeDailyUsage(principalKey, plan) {
       message: error?.message || "unknown"
     });
     return consumeDailyUsageMemory(principalKey, plan);
+  }
+}
+
+function gamificationProfilesTableBaseURL() {
+  return `${SUPABASE_REST_URL}/${encodeURIComponent(GAMIFICATION_PROFILES_TABLE)}`;
+}
+
+function gamificationDailyTableBaseURL() {
+  return `${SUPABASE_REST_URL}/${encodeURIComponent(GAMIFICATION_DAILY_TABLE)}`;
+}
+
+function gamificationRecordRpcURL() {
+  return `${SUPABASE_REST_URL}/rpc/${encodeURIComponent(GAMIFICATION_RPC_RECORD_EVENT)}`;
+}
+
+function gamificationLevelForXp(totalXp) {
+  const xp = Math.max(0, Number(totalXp || 0));
+  return Math.max(1, Math.floor(Math.sqrt(xp / 120) + 1));
+}
+
+function previousDayKey(dayKey) {
+  const dayDate = new Date(`${String(dayKey || "")}T00:00:00.000Z`);
+  if (!Number.isFinite(dayDate.getTime())) return "";
+  dayDate.setUTCDate(dayDate.getUTCDate() - 1);
+  return dayDate.toISOString().slice(0, 10);
+}
+
+function normalizeGamificationEventType(raw) {
+  const value = String(raw || "").trim().toLowerCase();
+  if (value === "translate") return "translate";
+  if (value === "rewrite") return "rewrite";
+  if (value === "challenge_complete") return "challenge_complete";
+  if (value === "streak_bonus") return "streak_bonus";
+  if (value === "manual_adjustment") return "manual_adjustment";
+  return "dictate";
+}
+
+function calculateGamificationXpDelta(eventType, wordsCount) {
+  const safeWords = Math.max(0, Number(wordsCount || 0));
+  const normalizedEvent = normalizeGamificationEventType(eventType);
+  if (normalizedEvent === "challenge_complete") {
+    return Math.max(50, safeWords + 50);
+  }
+  let bonus = 0;
+  if (normalizedEvent === "translate") bonus = 10;
+  if (normalizedEvent === "rewrite") bonus = 8;
+  return safeWords + bonus;
+}
+
+function streakBonusForDays(days) {
+  const safeDays = Math.max(0, Number(days || 0));
+  if (safeDays >= 30 && safeDays % 30 === 0) return 250;
+  if (safeDays >= 14 && safeDays % 14 === 0) return 100;
+  if (safeDays >= 7 && safeDays % 7 === 0) return 50;
+  if (safeDays >= 3 && safeDays % 3 === 0) return 25;
+  return 0;
+}
+
+function buildGamificationProfile(principalKey, plan, row = {}) {
+  const normalizedPlan = normalizePlan(row?.plan || plan);
+  const xp = Math.max(0, Number(row?.xp || 0));
+  const level = Math.max(1, Number(row?.level || gamificationLevelForXp(xp)));
+  return {
+    principalKey: String(principalKey || ""),
+    plan: normalizedPlan,
+    xp,
+    level,
+    streakDays: Math.max(0, Number(row?.streakDays ?? row?.streak_days ?? 0)),
+    longestStreakDays: Math.max(0, Number(row?.longestStreakDays ?? row?.longest_streak_days ?? 0)),
+    coins: Math.max(0, Number(row?.coins || 0)),
+    lastActivityDay: String((row?.lastActivityDay ?? row?.last_activity_day) || "").trim() || null
+  };
+}
+
+function buildGamificationDaily(dayKey, principalKey, plan, row = {}) {
+  const normalizedPlan = normalizePlan(row?.plan || plan);
+  return {
+    dayKey: String((row?.dayKey ?? row?.day_key) || dayKey),
+    principalKey: String((row?.principalKey ?? row?.principal_key) || principalKey),
+    plan: normalizedPlan,
+    wordsCount: Math.max(0, Number(row?.wordsCount ?? row?.words_count ?? 0)),
+    dictateCount: Math.max(0, Number(row?.dictateCount ?? row?.dictate_count ?? 0)),
+    translateCount: Math.max(0, Number(row?.translateCount ?? row?.translate_count ?? 0)),
+    rewriteCount: Math.max(0, Number(row?.rewriteCount ?? row?.rewrite_count ?? 0)),
+    challengesCompleted: Math.max(0, Number(row?.challengesCompleted ?? row?.challenges_completed ?? 0)),
+    xpEarned: Math.max(0, Number(row?.xpEarned ?? row?.xp_earned ?? 0))
+  };
+}
+
+function buildGamificationMissions(today) {
+  const transformCurrent = Math.max(0, Number(today.translateCount || 0) + Number(today.rewriteCount || 0));
+  const items = [
+    {
+      id: "words",
+      title: "Dictate words",
+      current: Math.max(0, Number(today.wordsCount || 0)),
+      target: GAMIFICATION_MISSION_WORDS
+    },
+    {
+      id: "dictate",
+      title: "Complete dictations",
+      current: Math.max(0, Number(today.dictateCount || 0)),
+      target: GAMIFICATION_MISSION_DICTATE
+    },
+    {
+      id: "transform",
+      title: "Translate or rewrite",
+      current: transformCurrent,
+      target: GAMIFICATION_MISSION_TRANSFORM
+    }
+  ].map((item) => ({
+    ...item,
+    completed: item.current >= item.target
+  }));
+
+  const completedCount = items.filter((item) => item.completed).length;
+  return {
+    completed: completedCount === items.length,
+    completedCount,
+    totalCount: items.length,
+    items
+  };
+}
+
+function buildGamificationSnapshot({ source, principalKey, plan, profileRow, dailyRow, dayKey }) {
+  const resolvedDayKey = String(dayKey || currentUsageDayKey());
+  const profile = buildGamificationProfile(principalKey, plan, profileRow);
+  const today = buildGamificationDaily(resolvedDayKey, principalKey, plan, dailyRow);
+  return {
+    source: String(source || "memory"),
+    profile,
+    today,
+    missions: buildGamificationMissions(today),
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function gamificationMemoryProfile(principalKey, plan) {
+  const key = String(principalKey || "").trim();
+  let profile = GAMIFICATION_PROFILE_BUCKETS.get(key);
+  if (!profile) {
+    profile = buildGamificationProfile(key, plan, {});
+    GAMIFICATION_PROFILE_BUCKETS.set(key, profile);
+  } else {
+    profile.plan = normalizePlan(plan || profile.plan);
+  }
+  return profile;
+}
+
+function gamificationMemoryDaily(dayKey, principalKey, plan) {
+  const key = `${dayKey}:${principalKey}`;
+  let daily = GAMIFICATION_DAILY_BUCKETS.get(key);
+  if (!daily) {
+    daily = buildGamificationDaily(dayKey, principalKey, plan, {});
+    GAMIFICATION_DAILY_BUCKETS.set(key, daily);
+  } else {
+    daily.plan = normalizePlan(plan || daily.plan);
+  }
+  return daily;
+}
+
+function readGamificationSnapshotMemory(principalKey, plan) {
+  const dayKey = currentUsageDayKey();
+  const profile = gamificationMemoryProfile(principalKey, plan);
+  const daily = gamificationMemoryDaily(dayKey, principalKey, plan);
+  return buildGamificationSnapshot({
+    source: "memory",
+    principalKey,
+    plan,
+    profileRow: profile,
+    dailyRow: daily,
+    dayKey
+  });
+}
+
+function recordGamificationEventMemory({
+  principalKey,
+  plan,
+  eventType,
+  wordsCount,
+  xpDelta
+}) {
+  const dayKey = currentUsageDayKey();
+  const normalizedPlan = normalizePlan(plan);
+  const profile = gamificationMemoryProfile(principalKey, normalizedPlan);
+  const daily = gamificationMemoryDaily(dayKey, principalKey, normalizedPlan);
+  const normalizedEvent = normalizeGamificationEventType(eventType);
+  const safeWords = Math.max(0, Number(wordsCount || 0));
+  const safeXp = Math.max(0, Number(xpDelta || 0));
+
+  daily.wordsCount += safeWords;
+  if (normalizedEvent === "dictate") daily.dictateCount += 1;
+  if (normalizedEvent === "translate") daily.translateCount += 1;
+  if (normalizedEvent === "rewrite") daily.rewriteCount += 1;
+  if (normalizedEvent === "challenge_complete") daily.challengesCompleted += 1;
+
+  let streakBonus = 0;
+  if (profile.lastActivityDay !== dayKey) {
+    const yesterday = previousDayKey(dayKey);
+    if (!profile.lastActivityDay) {
+      profile.streakDays = 1;
+    } else if (profile.lastActivityDay === yesterday) {
+      profile.streakDays = Math.max(1, Number(profile.streakDays || 0) + 1);
+    } else {
+      profile.streakDays = 1;
+    }
+    profile.longestStreakDays = Math.max(
+      Number(profile.longestStreakDays || 0),
+      Number(profile.streakDays || 0)
+    );
+    profile.lastActivityDay = dayKey;
+    streakBonus = streakBonusForDays(profile.streakDays);
+  }
+
+  const totalXp = safeXp + streakBonus;
+  profile.plan = normalizedPlan;
+  profile.xp = Math.max(0, Number(profile.xp || 0) + totalXp);
+  profile.level = gamificationLevelForXp(profile.xp);
+  daily.xpEarned += totalXp;
+
+  return buildGamificationSnapshot({
+    source: "memory",
+    principalKey,
+    plan: normalizedPlan,
+    profileRow: profile,
+    dailyRow: daily,
+    dayKey
+  });
+}
+
+async function readGamificationSnapshotSupabase(principalKey, plan) {
+  const dayKey = currentUsageDayKey();
+  const profileEndpoint = `${gamificationProfilesTableBaseURL()}?select=principal_key,plan,xp,level,streak_days,longest_streak_days,coins,last_activity_day&principal_key=eq.${encodeURIComponent(principalKey)}&limit=1`;
+  const dailyEndpoint = `${gamificationDailyTableBaseURL()}?select=day_key,principal_key,plan,words_count,dictate_count,translate_count,rewrite_count,challenges_completed,xp_earned&day_key=eq.${encodeURIComponent(dayKey)}&principal_key=eq.${encodeURIComponent(principalKey)}&limit=1`;
+
+  const [profileResponse, dailyResponse] = await Promise.all([
+    supabaseAdminRequest(profileEndpoint),
+    supabaseAdminRequest(dailyEndpoint)
+  ]);
+
+  if (!profileResponse.ok) {
+    throw new Error(`gamification profile read failed (${profileResponse.status}): ${profileResponse.bodyText.slice(0, 200)}`);
+  }
+  if (!dailyResponse.ok) {
+    throw new Error(`gamification daily read failed (${dailyResponse.status}): ${dailyResponse.bodyText.slice(0, 200)}`);
+  }
+
+  const profileRow = Array.isArray(profileResponse.json) ? (profileResponse.json[0] || null) : null;
+  const dailyRow = Array.isArray(dailyResponse.json) ? (dailyResponse.json[0] || null) : null;
+
+  return buildGamificationSnapshot({
+    source: "supabase",
+    principalKey,
+    plan,
+    profileRow: profileRow || {},
+    dailyRow: dailyRow || {},
+    dayKey
+  });
+}
+
+async function recordGamificationEventSupabase({
+  principalKey,
+  plan,
+  eventType,
+  wordsCount,
+  xpDelta,
+  source,
+  metadata
+}) {
+  const response = await supabaseAdminRequest(gamificationRecordRpcURL(), {
+    method: "POST",
+    body: {
+      p_principal_key: principalKey,
+      p_plan: normalizePlan(plan),
+      p_event_type: normalizeGamificationEventType(eventType),
+      p_words_count: Math.max(0, Number(wordsCount || 0)),
+      p_xp_delta: Math.max(0, Number(xpDelta || 0)),
+      p_source: source || null,
+      p_metadata: metadata && typeof metadata === "object" ? metadata : {}
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`gamification event write failed (${response.status}): ${response.bodyText.slice(0, 220)}`);
+  }
+
+  return readGamificationSnapshotSupabase(principalKey, plan);
+}
+
+async function readGamificationSnapshot(principalKey, plan) {
+  if (!GAMIFICATION_ENABLED) {
+    return buildGamificationSnapshot({
+      source: "disabled",
+      principalKey,
+      plan,
+      profileRow: {},
+      dailyRow: {},
+      dayKey: currentUsageDayKey()
+    });
+  }
+
+  if (!GAMIFICATION_SUPABASE_ENABLED) {
+    return readGamificationSnapshotMemory(principalKey, plan);
+  }
+
+  try {
+    return await readGamificationSnapshotSupabase(principalKey, plan);
+  } catch (error) {
+    recordBackendError("gamification_read_fallback", {
+      storage: "memory",
+      message: error?.message || "unknown"
+    });
+    return readGamificationSnapshotMemory(principalKey, plan);
+  }
+}
+
+async function recordGamificationEvent(event) {
+  if (!GAMIFICATION_ENABLED) return null;
+  if (!event?.principalKey) return null;
+
+  if (!GAMIFICATION_SUPABASE_ENABLED) {
+    return recordGamificationEventMemory(event);
+  }
+
+  try {
+    return await recordGamificationEventSupabase(event);
+  } catch (error) {
+    recordBackendError("gamification_write_fallback", {
+      storage: "memory",
+      message: error?.message || "unknown"
+    });
+    return recordGamificationEventMemory(event);
   }
 }
 
@@ -4477,6 +4819,13 @@ const server = createServer(async (req, res) => {
         supabaseBillingSyncEnabled: SUPABASE_BILLING_SYNC_ENABLED,
         supabaseBillingTable: SUPABASE_BILLING_TABLE,
         stripePricePlanMapCount: Object.keys(STRIPE_PRICE_PLAN_MAP).length
+      },
+      gamification: {
+        enabled: GAMIFICATION_ENABLED,
+        storage: GAMIFICATION_SUPABASE_ENABLED ? "supabase" : "memory",
+        profilesTable: GAMIFICATION_PROFILES_TABLE,
+        dailyTable: GAMIFICATION_DAILY_TABLE,
+        recordEventRpc: GAMIFICATION_RPC_RECORD_EVENT
       }
     });
     return;
@@ -4506,6 +4855,36 @@ const server = createServer(async (req, res) => {
       },
       recentErrors: recentBackendErrors()
     });
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/gamification") {
+    const auth = await verifyToken(req);
+    if (!auth.ok) {
+      recordBackendError("gamification_auth_failed", {
+        path: url.pathname,
+        status: auth.status,
+        message: auth.error
+      });
+      sendJson(req, res, auth.status, { error: auth.error });
+      return;
+    }
+
+    try {
+      const snapshot = await readGamificationSnapshot(auth.principal, auth.plan);
+      sendJson(req, res, 200, {
+        tag: BACKEND_TAG,
+        ...snapshot
+      });
+    } catch (error) {
+      recordBackendError("gamification_read_failed", {
+        path: url.pathname,
+        auth: auth.authType,
+        plan: auth.plan,
+        message: String(error?.message || "unknown")
+      });
+      sendJson(req, res, 500, { error: "Failed to load gamification." });
+    }
     return;
   }
 
@@ -4674,6 +5053,33 @@ const server = createServer(async (req, res) => {
       auth: auth.authType,
       plan: auth.plan
     });
+    if (result.status >= 200 && result.status < 300) {
+      const responseText = String(result?.json?.text || "").trim();
+      if (responseText) {
+        const appliedMode = String(result?.json?.appliedMode || "").trim().toLowerCase();
+        const eventType = appliedMode === "translate" ? "translate" : "dictate";
+        const wordsCount = countWords(responseText);
+        void recordGamificationEvent({
+          principalKey: auth.principal,
+          plan: auth.plan,
+          eventType,
+          wordsCount,
+          xpDelta: calculateGamificationXpDelta(eventType, wordsCount),
+          source: "polish",
+          metadata: {
+            appliedMode: appliedMode || "generic",
+            localFastpath: result?.json?.localFastpath === true,
+            fallback: result?.json?.fallback === true
+          }
+        }).catch((error) => {
+          recordBackendError("gamification_event_polish_failed", {
+            message: String(error?.message || "unknown"),
+            auth: auth.authType,
+            plan: auth.plan
+          });
+        });
+      }
+    }
     sendJson(req, res, result.status, result.json, {
       "X-RateLimit-Limit": String(rate.limit),
       "X-RateLimit-Remaining": String(rate.remaining),
@@ -4774,6 +5180,30 @@ const server = createServer(async (req, res) => {
         plan: auth.plan,
         message: String(result?.json?.error || "Unknown rewrite failure")
       });
+    }
+    if (result.status >= 200 && result.status < 300) {
+      const responseText = String(result?.json?.text || "").trim();
+      if (responseText) {
+        const wordsCount = countWords(responseText);
+        void recordGamificationEvent({
+          principalKey: auth.principal,
+          plan: auth.plan,
+          eventType: "rewrite",
+          wordsCount,
+          xpDelta: calculateGamificationXpDelta("rewrite", wordsCount),
+          source: "rewrite",
+          metadata: {
+            appliedMode: String(result?.json?.appliedMode || "").trim().toLowerCase() || "generic",
+            fallback: result?.json?.fallback === true
+          }
+        }).catch((error) => {
+          recordBackendError("gamification_event_rewrite_failed", {
+            message: String(error?.message || "unknown"),
+            auth: auth.authType,
+            plan: auth.plan
+          });
+        });
+      }
     }
     sendJson(req, res, result.status, result.json, {
       "X-RateLimit-Limit": String(rate.limit),
