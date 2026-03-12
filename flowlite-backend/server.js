@@ -36,6 +36,14 @@ function loadDotenv() {
 loadDotenv();
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4.1-nano";
+const MODEL_FLEX_SHORT = String(process.env.OPENAI_MODEL_FLEX_SHORT || MODEL).trim() || MODEL;
+const MODEL_FLEX_LONG = String(
+  process.env.OPENAI_MODEL_FLEX_LONG
+  || (MODEL === "gpt-4.1-nano" ? "gpt-4.1-mini" : MODEL)
+).trim() || MODEL_FLEX_SHORT;
+const MODEL_FLEX_LONG_CHARS = Math.max(120, Number(process.env.OPENAI_MODEL_FLEX_LONG_CHARS || 420));
+const MODEL_FLEX_LONG_WORDS = Math.max(20, Number(process.env.OPENAI_MODEL_FLEX_LONG_WORDS || 70));
+const MODEL_FLEX_EMAIL_FORCE_LONG = String(process.env.OPENAI_MODEL_FLEX_EMAIL_FORCE_LONG || "true").toLowerCase() !== "false";
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
 const BACKEND_TAG = "flowspeak-backend-2026-02-25-supabase-stripe-foundation";
@@ -1633,100 +1641,130 @@ async function requestModelDraft({
   user,
   requestSignal,
   maxTokens = OPENAI_MAX_TOKENS_POLISH,
-  wantsJsonOutput = true
+  wantsJsonOutput = true,
+  model = MODEL,
+  fallbackModel = ""
 }) {
   const attemptStats = [];
   let lastError = null;
   const overallStartedAt = Date.now();
 
-  for (let attempt = 1; attempt <= OPENAI_RETRIES; attempt += 1) {
-    if (requestSignal?.aborted) {
-      const abortedErr = new Error("Request aborted by client");
-      abortedErr.attempts = attemptStats;
-      throw abortedErr;
+  const modelCandidates = [];
+  for (const candidate of [String(model || "").trim(), String(fallbackModel || "").trim()]) {
+    if (!candidate) continue;
+    if (!modelCandidates.includes(candidate)) {
+      modelCandidates.push(candidate);
     }
+  }
+  if (!modelCandidates.length) {
+    modelCandidates.push(MODEL);
+  }
 
-    const elapsedMs = Date.now() - overallStartedAt;
-    const remainingBudget = OPENAI_MAX_MODEL_MS - elapsedMs;
-    if (remainingBudget <= 120) break;
+  let attemptCounter = 0;
+  for (let candidateIndex = 0; candidateIndex < modelCandidates.length; candidateIndex += 1) {
+    const candidateModel = modelCandidates[candidateIndex];
+    for (let attempt = 1; attempt <= OPENAI_RETRIES; attempt += 1) {
+      attemptCounter += 1;
 
-    const startedAt = Date.now();
-    try {
-      const controller = new AbortController();
-      const attemptTimeoutMs = Math.max(200, Math.min(OPENAI_TIMEOUT_MS, remainingBudget));
-      let timedOut = false;
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, attemptTimeoutMs);
-      const onRequestAbort = () => controller.abort();
-      if (requestSignal) {
-        requestSignal.addEventListener("abort", onRequestAbort, { once: true });
-      }
-      let response;
-      try {
-        const payload = {
-          model: MODEL,
-          temperature: 0,
-          max_tokens: Math.max(32, Math.min(Number(maxTokens || OPENAI_MAX_TOKENS_POLISH), 400)),
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user }
-          ]
-        };
-        if (wantsJsonOutput) {
-          payload.response_format = { type: "json_object" };
-        }
-        const http = await fetch(`${OPENAI_API_BASE_URL}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-          },
-          body: JSON.stringify(payload),
-          signal: controller.signal
-        });
-        const bodyText = await http.text();
-        if (!http.ok) {
-          throw new Error(`OpenAI HTTP ${http.status}: ${bodyText.slice(0, 240)}`);
-        }
-        try {
-          response = JSON.parse(bodyText);
-        } catch {
-          throw new Error("OpenAI returned invalid JSON.");
-        }
-      } catch (error) {
-        if (error?.name === "AbortError") {
-          if (requestSignal?.aborted) {
-            throw new Error("Request aborted by client");
-          }
-          if (timedOut) {
-            throw new Error(`OpenAI timeout after ${attemptTimeoutMs}ms`);
-          }
-          throw new Error("OpenAI request aborted");
-        }
-        throw error;
-      } finally {
-        clearTimeout(timeout);
-        if (requestSignal) {
-          requestSignal.removeEventListener("abort", onRequestAbort);
-        }
-      }
-
-      attemptStats.push({ attempt, ms: Date.now() - startedAt, ok: true });
-      return { response, attempts: attemptStats };
-    } catch (error) {
-      lastError = error;
-      attemptStats.push({ attempt, ms: Date.now() - startedAt, ok: false, error: error?.message || "unknown" });
       if (requestSignal?.aborted) {
-        break;
+        const abortedErr = new Error("Request aborted by client");
+        abortedErr.attempts = attemptStats;
+        throw abortedErr;
       }
-      if (attempt < OPENAI_RETRIES) {
-        const soFar = Date.now() - overallStartedAt;
-        if (soFar >= OPENAI_MAX_MODEL_MS - 120) {
+
+      const elapsedMs = Date.now() - overallStartedAt;
+      const remainingBudget = OPENAI_MAX_MODEL_MS - elapsedMs;
+      if (remainingBudget <= 120) break;
+
+      const startedAt = Date.now();
+      try {
+        const controller = new AbortController();
+        const attemptTimeoutMs = Math.max(200, Math.min(OPENAI_TIMEOUT_MS, remainingBudget));
+        let timedOut = false;
+        const timeout = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, attemptTimeoutMs);
+        const onRequestAbort = () => controller.abort();
+        if (requestSignal) {
+          requestSignal.addEventListener("abort", onRequestAbort, { once: true });
+        }
+        let response;
+        try {
+          const payload = {
+            model: candidateModel,
+            temperature: 0,
+            max_tokens: Math.max(32, Math.min(Number(maxTokens || OPENAI_MAX_TOKENS_POLISH), 400)),
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user }
+            ]
+          };
+          if (wantsJsonOutput) {
+            payload.response_format = { type: "json_object" };
+          }
+          const http = await fetch(`${OPENAI_API_BASE_URL}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${OPENAI_API_KEY}`,
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+          const bodyText = await http.text();
+          if (!http.ok) {
+            throw new Error(`OpenAI HTTP ${http.status}: ${bodyText.slice(0, 240)}`);
+          }
+          try {
+            response = JSON.parse(bodyText);
+          } catch {
+            throw new Error("OpenAI returned invalid JSON.");
+          }
+        } catch (error) {
+          if (error?.name === "AbortError") {
+            if (requestSignal?.aborted) {
+              throw new Error("Request aborted by client");
+            }
+            if (timedOut) {
+              throw new Error(`OpenAI timeout after ${attemptTimeoutMs}ms`);
+            }
+            throw new Error("OpenAI request aborted");
+          }
+          throw error;
+        } finally {
+          clearTimeout(timeout);
+          if (requestSignal) {
+            requestSignal.removeEventListener("abort", onRequestAbort);
+          }
+        }
+
+        attemptStats.push({
+          attempt: attemptCounter,
+          model: candidateModel,
+          ms: Date.now() - startedAt,
+          ok: true
+        });
+        return { response, attempts: attemptStats, usedModel: candidateModel };
+      } catch (error) {
+        lastError = error;
+        attemptStats.push({
+          attempt: attemptCounter,
+          model: candidateModel,
+          ms: Date.now() - startedAt,
+          ok: false,
+          error: error?.message || "unknown"
+        });
+        if (requestSignal?.aborted) {
           break;
         }
-        await sleep(OPENAI_RETRY_BACKOFF_MS * attempt);
+        if (attempt < OPENAI_RETRIES) {
+          const soFar = Date.now() - overallStartedAt;
+          if (soFar >= OPENAI_MAX_MODEL_MS - 120) {
+            break;
+          }
+          await sleep(OPENAI_RETRY_BACKOFF_MS * attempt);
+        }
       }
     }
   }
@@ -1751,13 +1789,85 @@ const STYLE_RULES = {
 const INTERPRETATION_RULES = {
   literal: "Interpretation: literal. Stay as close as possible to the spoken wording and order. Preserve phrasing, hesitations, and sentence structure unless something is clearly a recognition artifact.",
   balanced: "Interpretation: balanced. Clean up the text while staying close to what the user said.",
-  meaning: "Interpretation: meaning. Prioritize the user's likely intent over literal wording. You may merge fragments, reorder ideas, smooth awkward phrasing, and turn rough speech into the clearest natural sentence or paragraph, but do not add new facts, commitments, or requests. If details are uncertain, keep them generic instead of guessing."
+  meaning: "Interpretation: meaning. Prioritize the user's likely intent over literal wording. You may merge fragments, reorder ideas, smooth awkward phrasing, and turn rough speech into the clearest natural sentence or paragraph, but do not add new facts, commitments, or requests. If details are uncertain, keep them generic instead of guessing.",
+  flex: "Interpretation: flex. Apply advanced dictation formatting rules with strict command handling, artifact cleanup, and structure reconstruction, while never acting like a conversational assistant."
 };
 
 const POLISH_BASE_GUARDRAIL =
   "Task type is transcription polishing, not chat or Q&A. Never answer, agree/disagree, ask follow-up questions, or add assistant commentary. Rewrite only the dictated content.";
 const POLISH_FACT_GUARDRAIL =
   "Preserve concrete details (names, dates, numbers, amounts, URLs, explicit yes/no intent) unless they are clearly recognition errors.";
+const FLEX_NO_EM_DASH_RULE =
+  "Never output em dash. Replace it with comma, period, or semicolon.";
+const FLEX_ROLE_RULES = [
+  "Role: you are a text formatter, not a conversational assistant.",
+  "USER MESSAGE is raw dictation to format.",
+  "Output only the formatted USER MESSAGE.",
+  "Never add explanations, acknowledgments, refusals, answers, or assistant-style commentary.",
+  "Formatting commands must target dictated text. Everything else is content to format.",
+  "If unclear, format as-is."
+].join(" ");
+const FLEX_ARTIFACT_RULES = [
+  "Two-pass artifact handling is mandatory.",
+  "Pass 1 (mental): strip fillers, stutters, false starts, self-correction noise, and malformed punctuation to recover clean structure and boundaries.",
+  "Pass 2 (output): remove artifacts and output natural clean text."
+].join(" ");
+const FLEX_ABSOLUTE_RULES = [
+  FLEX_NO_EM_DASH_RULE,
+  "Context spelling overrides transcription when phonetically plausible.",
+  "When context includes names, files, variables, and technical terms, treat that spelling as authoritative.",
+  "Email greeting must be on its own line and body must start on the next line.",
+  "Execute only commands that target dictated text or structured completion.",
+  "Never apply styling unless explicitly requested in dictation."
+].join(" ");
+const FLEX_PROCESS_RULES = [
+  "Process order: phonetic correction, self-correction resolution, command/content separation, structure detection, command execution, formatting, naturalness cleanup, final output.",
+  "Self-corrections always win: delete rejected phrase and keep latest intended phrase.",
+  "Correction cues include: 'I mean', 'actually', 'scratch that', 'wait', and 'no/not/nei' when replacing preceding phrase."
+].join(" ");
+const FLEX_COMMAND_RULES = [
+  "Commands transform dictated text only.",
+  "Content-generation requests (for example: write, tell, create, explain) are text to format, not tasks to execute.",
+  "Execute only direct text manipulation, structured completion, and tone transformation commands that target dictated text.",
+  "When command target is ambiguous, choose the nearest relevant phrase before the command.",
+  "If unclear, treat as content and format it."
+].join(" ");
+const FLEX_FORMAT_RULES = [
+  "Default structure is paragraphs with clear sentence boundaries.",
+  "Use bullet lists when explicit list signals or clear multi-item sequences are present.",
+  "Use numbered lists only when explicitly requested or clearly dictated as ordered markers.",
+  "Use quotation marks when referencing exact wording, labels, buttons, fields, direct speech, or question examples.",
+  "Auto-format dictated contact details and code/command snippets where obvious."
+].join(" ");
+const FLEX_EMAIL_RULES = [
+  "When email structure is intended, output: greeting line, body paragraph(s), blank line, sign-off.",
+  "Never merge greeting and body on the same line.",
+  "Never duplicate greeting words (for example 'Hei Hei,')."
+].join(" ");
+const FLEX_NATURALNESS_RULES = [
+  "Preserve user wording and style whenever possible.",
+  "Remove fillers, stutters, repeated discourse markers, and false starts.",
+  "Fix grammar, punctuation, agreement, and sentence boundaries.",
+  "Split long or tangled sentences into shorter natural sentences.",
+  "Do not add new facts, commitments, names, times, assumptions, or requests.",
+  "Do not add emoji unless explicitly spoken or requested."
+].join(" ");
+const FLEX_FINAL_CHECK_RULES = [
+  "Mandatory pre-output check: no em dash, self-corrections resolved, email greeting isolated, commands executed (not echoed), no trailing artifacts, long sentences split, grammar and punctuation correct.",
+  "Every sentence must end with proper punctuation."
+].join(" ");
+const FLEX_CORE_RULES = [
+  FLEX_ROLE_RULES,
+  FLEX_ARTIFACT_RULES,
+  FLEX_ABSOLUTE_RULES,
+  FLEX_PROCESS_RULES,
+  FLEX_COMMAND_RULES,
+  FLEX_FORMAT_RULES,
+  FLEX_EMAIL_RULES,
+  FLEX_NATURALNESS_RULES,
+  "Spoken punctuation aliases should become symbols, including slash/slahs '/', komma ',', punktum '.', and quote aliases like hermetegn/gåseøyne to quotation marks.",
+  FLEX_FINAL_CHECK_RULES
+].join(" ");
 
 function normalizeStyle(raw) {
   // Style selection is disabled in the app; keep backend behavior fixed to clean.
@@ -1766,8 +1876,13 @@ function normalizeStyle(raw) {
 
 function normalizeInterpretationLevel(raw) {
   const v = String(raw || "").trim().toLowerCase();
-  if (v === "literal" || v === "balanced" || v === "meaning") return v;
+  if (v === "literal" || v === "balanced" || v === "meaning" || v === "flex") return v;
   return "balanced";
+}
+
+function isMeaningLikeInterpretation(interpretationLevel) {
+  const normalized = normalizeInterpretationLevel(interpretationLevel);
+  return normalized === "meaning" || normalized === "flex";
 }
 
 function replaceLastMatch(text, pattern, replacement) {
@@ -2435,6 +2550,16 @@ function normalizePunctuationArtifacts(text) {
     .trim();
 }
 
+function removeEmDashes(text) {
+  return String(text || "")
+    .replace(/\u2014/g, ", ")
+    .replace(/[ \t]+([,.;!?])/g, "$1")
+    .replace(/,\s*,+/g, ", ")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
 const BULLET_COMMAND_PREFIX_RE = /^\s*(?:(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\s+(?:dette\s+)?(?:som\s+)?(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)|(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste))\s*[:,-]?\s*/i;
 const BULLET_COMMAND_HINT_RE = /\b(?:lag|skriv|sett\s+opp|gjør\s+om\s+til|formater|make|turn|format)\b[\s\S]{0,48}\b(?:bullet(?:\s|-)?points?|bulletpoints?|punktliste|punkter|liste)\b/i;
 const BULLET_IMPLICIT_LIST_TRIGGER_RE = /\b(?:trenger|må\s+ha|skal\s+ha|må\s+kjøpe|kjøp|hand(?:le)?list(?:e|en|a)|ingredienser|we\s+need|need|shopping\s+list|shoppinglist|buy|get)\b/i;
@@ -2992,7 +3117,11 @@ function finalizePolishOutput(text, { style, mode, interpretationLevel }) {
     ? locallyPolished
     : applyStyleHeuristics(locallyPolished, style, mode);
   const withSpokenFormatting = applySpokenFormattingPostprocess(styled);
-  return normalizePunctuationArtifacts(withSpokenFormatting);
+  const normalized = normalizePunctuationArtifacts(withSpokenFormatting);
+  if (normalizeInterpretationLevel(interpretationLevel) === "flex") {
+    return removeEmDashes(normalized);
+  }
+  return normalized;
 }
 
 function isBrowserBundle(bundleId) {
@@ -3102,25 +3231,50 @@ function countWords(text) {
   return trimmed.split(/\s+/).length;
 }
 
+function resolvePolishModel({ mode, text, interpretationLevel, targetLanguageForced }) {
+  const normalizedInterpretationLevel = normalizeInterpretationLevel(interpretationLevel);
+  if (normalizedInterpretationLevel !== "flex") {
+    return { model: MODEL, fallbackModel: "", route: "default" };
+  }
+
+  const normalizedMode = String(mode || "generic").trim().toLowerCase();
+  const clean = String(text || "").trim();
+  const wordCount = countWords(clean);
+  const forceLongForEmail = MODEL_FLEX_EMAIL_FORCE_LONG && (normalizedMode === "email_body" || normalizedMode === "email_subject");
+  const useLong = forceLongForEmail
+    || clean.length >= MODEL_FLEX_LONG_CHARS
+    || wordCount >= MODEL_FLEX_LONG_WORDS
+    || (targetLanguageForced && wordCount >= Math.max(20, Math.floor(MODEL_FLEX_LONG_WORDS * 0.75)));
+
+  const primaryModel = useLong ? MODEL_FLEX_LONG : MODEL_FLEX_SHORT;
+  const fallbackModel = primaryModel === MODEL ? "" : MODEL;
+  return {
+    model: primaryModel,
+    fallbackModel,
+    route: useLong ? "flex_long" : "flex_short"
+  };
+}
+
 function resolvePolishMaxTokens(mode, text, targetLanguageForced, interpretationLevel) {
   const normalizedMode = String(mode || "generic").trim().toLowerCase();
   const normalizedInterpretationLevel = normalizeInterpretationLevel(interpretationLevel);
+  const meaningLike = isMeaningLikeInterpretation(normalizedInterpretationLevel);
   const textLength = String(text || "").trim().length;
 
   // Short translations do not need the broader drafting token budget.
   if (targetLanguageForced && textLength <= 80) {
     const literalBudget = Math.max(32, Math.min(64, OPENAI_MAX_TOKENS_POLISH_TRANSLATE));
-    return normalizedInterpretationLevel === "meaning"
+    return meaningLike
       ? Math.max(literalBudget, 96)
       : literalBudget;
   }
   if (targetLanguageForced && textLength <= 220) {
-    return normalizedInterpretationLevel === "meaning"
+    return meaningLike
       ? Math.max(OPENAI_MAX_TOKENS_POLISH_TRANSLATE, 112)
       : OPENAI_MAX_TOKENS_POLISH_TRANSLATE;
   }
 
-  if (normalizedInterpretationLevel === "meaning") {
+  if (meaningLike) {
     if (normalizedMode === "email_subject") {
       return Math.max(OPENAI_MAX_TOKENS_POLISH_SUBJECT, 72);
     }
@@ -3139,6 +3293,55 @@ function resolvePolishMaxTokens(mode, text, targetLanguageForced, interpretation
   return OPENAI_MAX_TOKENS_POLISH;
 }
 
+function buildFlexPolishSystemPrompt({
+  mode,
+  lang,
+  url,
+  ctx,
+  dictionaryRule,
+  targetLanguageForced
+}) {
+  let contextBlock = "";
+  if (mode !== "generic") {
+    if (url) contextBlock += `\nURL: ${url}`;
+    if (ctx) contextBlock += `\nContext: ${ctx}`;
+  }
+
+  const modeRule = MODE_RULES[mode] || MODE_RULES.generic;
+  const formatRule = mode === "email_body"
+    ? "Email format is mandatory: greeting on its own line, body starts on next line, sign-off after one blank line."
+    : mode === "note"
+      ? "Use clear note formatting. Lists should be used when structure or itemization is obvious."
+      : "Use natural paragraph structure with clear sentence boundaries.";
+
+  if (targetLanguageForced) {
+    return [
+      `Translate the user's text into ${lang}.`,
+      "You are still a formatter: output only the final translated text.",
+      "When translating, preserve intent, structure, names, numbers, and formatting commands.",
+      "If literal translation is awkward, prefer natural target-language phrasing without adding new facts.",
+      "Remove dictation artifacts and fillers; keep only corrected final intent.",
+      formatRule,
+      FLEX_CORE_RULES,
+      POLISH_BASE_GUARDRAIL,
+      POLISH_FACT_GUARDRAIL,
+      dictionaryRule,
+      "Return exactly one final translation as plain text."
+    ].join(" ");
+  }
+
+  return [
+    `Output language must be ${lang}.`,
+    modeRule,
+    formatRule,
+    FLEX_CORE_RULES,
+    POLISH_BASE_GUARDRAIL,
+    POLISH_FACT_GUARDRAIL,
+    dictionaryRule,
+    "Return JSON only: {\"language\":\"...\",\"text\":\"...\"}." + contextBlock
+  ].join(" ");
+}
+
 function buildPolishSystemPrompt({
   mode,
   style,
@@ -3149,17 +3352,30 @@ function buildPolishSystemPrompt({
   targetLanguageForced,
   interpretationLevel
 }) {
+  const normalizedInterpretationLevel = normalizeInterpretationLevel(interpretationLevel);
+  if (normalizedInterpretationLevel === "flex") {
+    return buildFlexPolishSystemPrompt({
+      mode,
+      lang,
+      url,
+      ctx,
+      dictionaryRule,
+      targetLanguageForced
+    });
+  }
+
   const selfCorrectionRule = "Self-correction precedence: if the user revises themselves (for example 'torsdag ... nei fredag', 'eh nei', 'nei, jeg mener', 'no, I mean', or 'melk, nei ikke melk'), keep only the latest corrected detail and remove negated items. Remove superseded alternatives, false starts, and correction cue words.";
+  const meaningLike = isMeaningLikeInterpretation(normalizedInterpretationLevel);
 
   if (targetLanguageForced) {
-    const translationRule = interpretationLevel === "literal"
+    const translationRule = normalizedInterpretationLevel === "literal"
       ? "Translate as literally as possible. Stay close to the source wording and structure unless a direct translation would be unclear."
-      : interpretationLevel === "meaning"
+      : meaningLike
         ? "Translate for intended meaning and the best possible phrasing. Resolve fragmented speech, implied punctuation, and rough wording into the clearest natural translation."
         : "Preserve meaning, names, numbers, and formatting.";
 
     const spokenFormattingRule = "If the dictated text includes explicit formatting commands, apply them naturally and remove command words from the final output. Convert spoken emoji words like 'smilefjes' to emoji only when those words are explicitly spoken. Never add emoji unless explicitly requested or already present in the input. Spoken punctuation words should become symbols (for example 'slash/slahs' -> '/', 'komma' -> ',', 'punktum' -> '.'). Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') should be rendered with parentheses.";
-    const uncertaintyRule = interpretationLevel === "meaning"
+    const uncertaintyRule = meaningLike
       ? "If key details are ambiguous, keep the wording general and do not guess specifics."
       : "";
     return `Translate the user's text into ${lang}. ${translationRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${selfCorrectionRule} ${uncertaintyRule} ${spokenFormattingRule} Do not add commentary, alternatives, or extra context. Return exactly one final translation only as plain text. ${dictionaryRule}`;
@@ -3167,10 +3383,10 @@ function buildPolishSystemPrompt({
 
   const langRule = `Output language must be ${lang}. Do not translate into any other language.`;
   const modeRule = MODE_RULES[mode] || MODE_RULES.generic;
-  const styleRule = interpretationLevel === "literal"
+  const styleRule = normalizedInterpretationLevel === "literal"
     ? "Keep style changes to an absolute minimum."
     : (STYLE_RULES[style] || STYLE_RULES.clean);
-  const interpretationRule = INTERPRETATION_RULES[interpretationLevel] || INTERPRETATION_RULES.balanced;
+  const interpretationRule = INTERPRETATION_RULES[normalizedInterpretationLevel] || INTERPRETATION_RULES.balanced;
 
   let contextBlock = "";
   if (mode !== "generic") {
@@ -3183,10 +3399,10 @@ function buildPolishSystemPrompt({
     : "No added greetings/sign-offs unless already present.";
   const singleDraftRule = "Return exactly one final draft only. Never include alternatives, translations, duplicate versions, or placeholders like [Your Name].";
   const correctionRule = selfCorrectionRule;
-  const fidelityRule = interpretationLevel === "meaning"
+  const fidelityRule = meaningLike
     ? "You may infer the intended structure of fragmented speech, but do not invent new facts, topics, names, commitments, or questions that are not grounded in the input."
     : "Do not invent new facts, topics, requests, names, or questions. Rewrite only what is explicitly in the input.";
-  const uncertaintyRule = interpretationLevel === "meaning"
+  const uncertaintyRule = meaningLike
     ? "If key details are missing or uncertain, keep them open-ended and avoid specific assumptions."
     : "";
   const recipientRule = mode === "email_body"
@@ -3202,7 +3418,7 @@ function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, targe
   if (targetLanguageForced) return false;
 
   const normalizedInterpretationLevel = normalizeInterpretationLevel(interpretationLevel);
-  if (normalizedInterpretationLevel === "meaning") return false;
+  if (isMeaningLikeInterpretation(normalizedInterpretationLevel)) return false;
 
   const normalizedMode = String(mode || "generic").trim().toLowerCase();
   if (normalizedMode !== "generic" && normalizedMode !== "chat_message" && normalizedMode !== "note") {
@@ -3804,7 +4020,9 @@ async function handlePolish(body, requestSignal) {
       modelMs: 0,
       postprocessMs: 0,
       totalMs: 0,
-      modelAttempts: []
+      modelAttempts: [],
+      modelName: MODEL,
+      modelRoute: "default"
     };
 
     const text = String(body?.text || "").trim();
@@ -3832,6 +4050,14 @@ async function handlePolish(body, requestSignal) {
       : applySelfCorrections(text);
     const correctedInput = applyDictionaryReplacements(preparedInput, dictionary);
     const commandAwareInput = applySpokenFormattingPostprocess(correctedInput);
+    const modelRoute = resolvePolishModel({
+      mode,
+      text: commandAwareInput,
+      interpretationLevel,
+      targetLanguageForced
+    });
+    timings.modelName = modelRoute.model || MODEL;
+    timings.modelRoute = modelRoute.route || "default";
 
     console.log(
       "📨 mode:",
@@ -3854,6 +4080,10 @@ async function handlePolish(body, requestSignal) {
       })() : ""),
       "| forcedLang:",
       targetLanguageForced,
+      "| modelRoute:",
+      timings.modelRoute,
+      "| model:",
+      timings.modelName,
       "| ctxChars:",
       ctx.length
     );
@@ -3898,7 +4128,7 @@ async function handlePolish(body, requestSignal) {
     } else {
       const modelStartedAt = Date.now();
       try {
-        const { response, attempts } = await requestModelDraft({
+        const { response, attempts, usedModel } = await requestModelDraft({
           system,
           user: commandAwareInput,
           requestSignal,
@@ -3908,9 +4138,12 @@ async function handlePolish(body, requestSignal) {
             targetLanguageForced,
             interpretationLevel
           ),
-          wantsJsonOutput: !targetLanguageForced
+          wantsJsonOutput: !targetLanguageForced,
+          model: modelRoute.model,
+          fallbackModel: modelRoute.fallbackModel
         });
         timings.modelAttempts = attempts;
+        if (usedModel) timings.modelName = usedModel;
         timings.modelMs = Date.now() - modelStartedAt;
         const postprocessStartedAt = Date.now();
 
@@ -3986,7 +4219,9 @@ async function handlePolish(body, requestSignal) {
       modelMs: timings.modelMs,
       postprocessMs: timings.postprocessMs,
       totalMs: timings.totalMs,
-      retries: retryCount
+      retries: retryCount,
+      model: timings.modelName,
+      modelRoute: timings.modelRoute
     }));
 
     return {
@@ -4003,8 +4238,11 @@ async function handlePolish(body, requestSignal) {
           modelMs: timings.modelMs,
           postprocessMs: timings.postprocessMs,
           totalMs: timings.totalMs,
-          retries: retryCount
-        }
+          retries: retryCount,
+          model: timings.modelName,
+          modelRoute: timings.modelRoute
+        },
+        model: timings.modelName
       }
     };
   } catch (err) {
@@ -4835,6 +5073,13 @@ const server = createServer(async (req, res) => {
     sendJson(req, res, 200, {
       tag: BACKEND_TAG,
       model: MODEL,
+      flexModelRouting: {
+        shortModel: MODEL_FLEX_SHORT,
+        longModel: MODEL_FLEX_LONG,
+        longChars: MODEL_FLEX_LONG_CHARS,
+        longWords: MODEL_FLEX_LONG_WORDS,
+        emailForceLong: MODEL_FLEX_EMAIL_FORCE_LONG
+      },
       host: HOST,
       authRequired: AUTH_REQUIRED,
       auth: {
@@ -5311,7 +5556,8 @@ server.listen(PORT, HOST, () => {
     ? `tokens:${AUTH_TOKEN_HASHES.size}|jwt:${JWT_SECRETS.length}|supabase:${SUPABASE_JWT_ENABLED ? 1 : 0}`
     : "disabled";
   const billingSummary = `stripeWebhook:${STRIPE_WEBHOOK_ENABLED ? 1 : 0}|supabaseSync:${SUPABASE_BILLING_SYNC_ENABLED ? 1 : 0}`;
-  console.log(`FlowLite backend on http://${HOST}:${PORT} [${BACKEND_TAG}] auth=${authSummary} billing=${billingSummary}`);
+  const modelSummary = `base:${MODEL}|flexShort:${MODEL_FLEX_SHORT}|flexLong:${MODEL_FLEX_LONG}`;
+  console.log(`FlowLite backend on http://${HOST}:${PORT} [${BACKEND_TAG}] auth=${authSummary} billing=${billingSummary} models=${modelSummary}`);
 });
 
 function shutdown(signal) {

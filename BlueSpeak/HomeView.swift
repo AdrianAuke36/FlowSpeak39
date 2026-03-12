@@ -61,6 +61,37 @@ struct HomeView: View {
 
                         VStack {
                             HStack(spacing: 10) {
+                                Menu {
+                                    ForEach(InterfaceLanguage.allCases) { language in
+                                        Button {
+                                            settings.interfaceLanguage = language
+                                        } label: {
+                                            HStack {
+                                                Text("\(language.flagEmoji) \(language.label)")
+                                                if settings.interfaceLanguage == language {
+                                                    Spacer(minLength: 8)
+                                                    Image(systemName: "checkmark")
+                                                }
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    Text(settings.interfaceLanguage.flagEmoji)
+                                        .font(.system(size: 18))
+                                        .frame(width: 34, height: 34)
+                                }
+                                .menuStyle(.borderlessButton)
+                                .buttonStyle(.plain)
+                                .background(
+                                    Circle()
+                                        .fill(AppTheme.surface)
+                                        .overlay(
+                                            Circle()
+                                                .strokeBorder(AppTheme.border, lineWidth: 1)
+                                        )
+                                )
+                                .help(settings.ui("Bytt appspråk", "Change app language"))
+
                                 Button {
                                     showAccountPopover.toggle()
                                 } label: {
@@ -1819,8 +1850,11 @@ struct Sidebar: View {
                 // Removed RoundedRectangle with waveform.path per instructions
 
                 Text("BlueSpeak")
-                    .font(.system(size: 26, weight: .bold, design: .serif))
+                    .font(.system(size: 22, weight: .bold, design: .serif))
                     .foregroundStyle(AppTheme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.84)
+                    .layoutPriority(1)
 
                 Text(planBadgeLabel)
                     .font(.system(size: 11, weight: .semibold))
@@ -1835,6 +1869,8 @@ struct Sidebar: View {
                                     .strokeBorder(planBadgeBorderColor, lineWidth: 1)
                             )
                     )
+
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 18)

@@ -36,6 +36,15 @@ enum InterfaceLanguage: String, CaseIterable, Identifiable {
             return "English"
         }
     }
+
+    var flagEmoji: String {
+        switch self {
+        case .norwegian:
+            return "🇳🇴"
+        case .english:
+            return "🇬🇧"
+        }
+    }
 }
 
 enum AppLanguage: String, CaseIterable, Identifiable {
@@ -114,6 +123,7 @@ enum InterpretationLevel: String, CaseIterable, Identifiable {
     case literal
     case balanced
     case meaning
+    case flex
 
     var id: String { rawValue }
 
@@ -122,6 +132,7 @@ enum InterpretationLevel: String, CaseIterable, Identifiable {
         case .literal: return AppSettings.shared.ui("Ordrett", "Literal")
         case .balanced: return AppSettings.shared.ui("Balansert", "Balanced")
         case .meaning: return AppSettings.shared.ui("Mening", "Meaning")
+        case .flex: return "Flex"
         }
     }
 
@@ -141,6 +152,11 @@ enum InterpretationLevel: String, CaseIterable, Identifiable {
             return AppSettings.shared.ui(
                 "Skriver for best mulig mening og flyt uten å finne på noe nytt.",
                 "Optimizes for meaning and flow without inventing new content."
+            )
+        case .flex:
+            return AppSettings.shared.ui(
+                "Avansert tekstformattering: sterk opprydding, selvkorrigering, struktur og tegnsetting uten å svare som en assistent.",
+                "Advanced text formatting: aggressive cleanup, self-correction, structure, and punctuation without replying like an assistant."
             )
         }
     }
