@@ -1856,6 +1856,12 @@ const FLEX_FINAL_CHECK_RULES = [
   "Mandatory pre-output check: no em dash, self-corrections resolved, email greeting isolated, commands executed (not echoed), no trailing artifacts, long sentences split, grammar and punctuation correct.",
   "Every sentence must end with proper punctuation."
 ].join(" ");
+const SHARED_FORMATTER_CORE_RULES = [
+  FLEX_NO_EM_DASH_RULE,
+  "You are a formatter, not a conversational assistant. Output only the transformed text.",
+  "Never include acknowledgments, explanations, prefixes, or alternative drafts.",
+  "Execute only commands that target the provided text. If command intent is ambiguous, prefer minimal safe edits and preserve meaning."
+].join(" ");
 const FLEX_CORE_RULES = [
   FLEX_ROLE_RULES,
   FLEX_ARTIFACT_RULES,
@@ -3118,10 +3124,7 @@ function finalizePolishOutput(text, { style, mode, interpretationLevel }) {
     : applyStyleHeuristics(locallyPolished, style, mode);
   const withSpokenFormatting = applySpokenFormattingPostprocess(styled);
   const normalized = normalizePunctuationArtifacts(withSpokenFormatting);
-  if (normalizeInterpretationLevel(interpretationLevel) === "flex") {
-    return removeEmDashes(normalized);
-  }
-  return normalized;
+  return removeEmDashes(normalized);
 }
 
 function isBrowserBundle(bundleId) {
@@ -3378,7 +3381,7 @@ function buildPolishSystemPrompt({
     const uncertaintyRule = meaningLike
       ? "If key details are ambiguous, keep the wording general and do not guess specifics."
       : "";
-    return `Translate the user's text into ${lang}. ${translationRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${selfCorrectionRule} ${uncertaintyRule} ${spokenFormattingRule} Do not add commentary, alternatives, or extra context. Return exactly one final translation only as plain text. ${dictionaryRule}`;
+    return `Translate the user's text into ${lang}. ${translationRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${SHARED_FORMATTER_CORE_RULES} ${selfCorrectionRule} ${uncertaintyRule} ${spokenFormattingRule} Do not add commentary, alternatives, or extra context. Ensure natural sentence-ending punctuation. Return exactly one final translation only as plain text. ${dictionaryRule}`;
   }
 
   const langRule = `Output language must be ${lang}. Do not translate into any other language.`;
@@ -3410,7 +3413,7 @@ function buildPolishSystemPrompt({
     : "";
   const spokenFormattingRule = "If the dictated text contains explicit formatting commands, obey them and remove the command words from the final output. Convert spoken emoji words like 'smilefjes' to emoji only when those words are explicitly spoken. Never add emoji unless explicitly requested or already present in the input. Spoken punctuation words like 'slash/slahs', 'komma', 'punktum' -> '/', ',', '.'. Spoken parenthesis commands ('åpen parentes', 'lukk parentes', 'i parentes') -> proper parentheses.";
 
-  return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${uncertaintyRule} ${recipientRule} ${spokenFormattingRule} ${dictionaryRule} Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
+  return `Polish punctuation and phrasing, keep meaning. ${modeRule} ${styleRule} ${interpretationRule} ${langRule} ${POLISH_BASE_GUARDRAIL} ${POLISH_FACT_GUARDRAIL} ${SHARED_FORMATTER_CORE_RULES} ${noGreetingRule} ${singleDraftRule} ${correctionRule} ${fidelityRule} ${uncertaintyRule} ${recipientRule} ${spokenFormattingRule} ${dictionaryRule} Ensure natural sentence-ending punctuation. Return JSON only: {"language":"...","text":"..."}${contextBlock}`;
 }
 
 function shouldUsePolishLocalFastpath({ mode, style, targetLanguageForced, targetLanguage, text, interpretationLevel }) {
@@ -4205,6 +4208,10 @@ async function handlePolish(body, requestSignal) {
     finalText = preserveRequestedEmojis(commandAwareInput, finalText);
     finalText = stripUnrequestedEmojis(commandAwareInput, finalText);
     finalText = tidyBulletListOutput(finalText);
+    if (mode === "email_body") {
+      finalText = normalizeEmailBody(finalText);
+    }
+    finalText = removeEmDashes(normalizePunctuationArtifacts(finalText));
     timings.totalMs = Date.now() - requestStartedAt;
     const retryCount = Math.max(0, (timings.modelAttempts?.length || 0) - 1);
     console.log(
@@ -4348,6 +4355,8 @@ async function handleRewrite(body, requestSignal) {
     const styleRule = STYLE_RULES[style] || STYLE_RULES.clean;
     const dictionaryRule = buildDictionaryPromptClause(dictionary);
     const baseSafetyRule = "Keep names, dates, numbers, and factual content unless the instruction explicitly requests changing them.";
+    const rewriteCoreRule = SHARED_FORMATTER_CORE_RULES;
+    const rewriteCorrectionRule = "Self-correction precedence for spoken instruction: when the user revises themselves (for example 'nei ... jeg mener ...' or 'no, I mean ...'), keep only the latest intent and ignore superseded instruction fragments.";
     const noAssumptionRule = draftReplyFromContext
       ? "Use only facts explicitly present in the incoming message context or spoken instruction. Do not invent status updates, percentages, timelines, confirmations, attachments, progress estimates, future plans, or expectations."
       : "";
@@ -4411,7 +4420,7 @@ async function handleRewrite(body, requestSignal) {
         ? Math.max(80, Math.min(rewriteMaxTokensBase, veryShortSummaryRequested ? 128 : 180))
         : rewriteMaxTokensBase
     );
-    const system = `${taskRule} ${summaryRule} ${styleRule} ${langRule} ${baseSafetyRule} ${noAssumptionRule} ${concisePointRule} ${singleDraftRule} ${spokenFormattingRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
+    const system = `${taskRule} ${summaryRule} ${styleRule} ${langRule} ${baseSafetyRule} ${rewriteCoreRule} ${rewriteCorrectionRule} ${noAssumptionRule} ${concisePointRule} ${singleDraftRule} ${spokenFormattingRule} ${dictionaryRule} ${memoryRule} Return JSON only: {"language":"...","text":"..."}`;
     const memorySection = replyMemories.length
       ? `\n\nRelevant reply memories:\n${replyMemories.map((memory) => {
         const triggerPart = memory.triggers ? ` (triggers: ${memory.triggers})` : "";
@@ -4473,6 +4482,10 @@ async function handleRewrite(body, requestSignal) {
       });
     }
     finalText = tidyBulletListOutput(finalText);
+    if (isEmailReplyMode) {
+      finalText = normalizeEmailBody(finalText);
+    }
+    finalText = removeEmDashes(normalizePunctuationArtifacts(finalText)).trim();
     const languageMismatchDetected = (
       (!allowsLanguageChange && isLikelyWrongForTarget(finalText, lang))
       || (explicitTargetLanguage && isLikelyWrongForTarget(finalText, effectiveOutputLanguage))

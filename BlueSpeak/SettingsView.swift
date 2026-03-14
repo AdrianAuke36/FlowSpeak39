@@ -103,7 +103,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(selectedSection.title(using: settings))
-                        .font(.system(size: 30, weight: .bold, design: .serif))
+                        .font(AppTheme.heading(size: 30, weight: .bold))
                         .foregroundStyle(AppTheme.primaryText)
 
                     Text(selectedSection.subtitle(using: settings))
@@ -818,7 +818,7 @@ struct SettingsView: View {
 
                     if let latest = appLog.latestSummary, !latest.isEmpty {
                         Text(latest)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(AppTheme.mono(size: 11))
                             .foregroundStyle(AppTheme.secondaryText)
                             .lineLimit(2)
                             .padding(10)

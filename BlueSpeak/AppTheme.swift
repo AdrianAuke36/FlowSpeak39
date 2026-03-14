@@ -2,29 +2,52 @@ import AppKit
 import SwiftUI
 
 enum AppTheme {
-    // Apple-native semantic colors
-    static let canvas = Color(nsColor: .windowBackgroundColor)
-    static let sidebar = Color(nsColor: .underPageBackgroundColor)
-    static let surface = Color(nsColor: .controlBackgroundColor)
-    static let surfaceMuted = Color(nsColor: .textBackgroundColor)
-    static let border = Color(nsColor: .separatorColor)
-    static let fieldBorder = Color(nsColor: .quaternaryLabelColor)
-    static let primaryText = Color(nsColor: .labelColor)
-    static let secondaryText = Color(nsColor: .secondaryLabelColor)
-    static let tertiaryText = Color(nsColor: .tertiaryLabelColor)
-    static let accent = Color.accentColor
-    static let accentText = Color.white
-    static let accentSoft = Color.accentColor.opacity(0.14)
-    static let success = Color(nsColor: .systemGreen)
-    static let warning = Color(nsColor: .systemOrange)
+    // BlueSpeak brand palette (Brand Guidelines v1.0)
+    static let canvas = Color(nsColor: .bsDynamic(light: 0xF0F4F7, dark: 0x0B0F14))
+    static let sidebar = Color(nsColor: .bsDynamic(light: 0xF4F7FA, dark: 0x161E27))
+    static let surface = Color(nsColor: .bsDynamic(light: 0xF4F7FA, dark: 0x161E27))
+    static let surfaceMuted = Color(nsColor: .bsDynamic(light: 0xF0F4F7, dark: 0x0B0F14))
+    static let border = Color(nsColor: .bsDynamic(light: 0x1A3D5C, dark: 0x1A3D5C, alphaLight: 0.16, alphaDark: 0.42))
+    static let fieldBorder = Color(nsColor: .bsDynamic(light: 0x1A3D5C, dark: 0x3D9BE9, alphaLight: 0.22, alphaDark: 0.36))
+    static let primaryText = Color(nsColor: .bsDynamic(light: 0x0B0F14, dark: 0xF0F4F7))
+    static let secondaryText = Color(nsColor: .bsDynamic(light: 0x1A3D5C, dark: 0xF0F4F7, alphaLight: 0.72, alphaDark: 0.72))
+    static let tertiaryText = Color(nsColor: .bsDynamic(light: 0x1A3D5C, dark: 0xF0F4F7, alphaLight: 0.52, alphaDark: 0.52))
+    static let accent = Color(nsColor: .bs(0x3D9BE9))
+    static let accentStrong = Color(nsColor: .bs(0x2280C8))
+    static let accentSoft = Color(nsColor: .bsDynamic(light: 0x5BB8FF, dark: 0x5BB8FF, alphaLight: 0.18, alphaDark: 0.18))
+    static let accentText = Color(nsColor: .bsDynamic(light: 0xF0F4F7, dark: 0xF0F4F7))
+    static let success = accent
+    static let warning = Color(nsColor: .bs(0x5BB8FF))
     static let destructive = Color(nsColor: .systemRed)
-    static let shadow = Color.black.opacity(0.12)
+    static let shadow = Color.black.opacity(0.18)
 
-    // Apple-native materials
-    static let cardMaterial: Material = .regularMaterial
-    static let fieldMaterial: Material = .thinMaterial
-    static let sidebarMaterial: Material = .regularMaterial
-    static let sheetMaterial: Material = .thickMaterial
+    // Surfaces
+    static let cardMaterial: Color = surface
+    static let fieldMaterial: Color = surface
+    static let sidebarMaterial: Color = sidebar
+    static let sheetMaterial: Color = surface
+
+    // Typography
+    static func heading(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        if NSFont(name: "DM Serif Display", size: size) != nil {
+            return .custom("DM Serif Display", size: size)
+        }
+        return .system(size: size, weight: weight, design: .serif)
+    }
+
+    static func body(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        if NSFont(name: "DM Sans", size: size) != nil {
+            return .custom("DM Sans", size: size)
+        }
+        return .system(size: size, weight: weight)
+    }
+
+    static func mono(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        if NSFont(name: "DM Mono", size: size) != nil {
+            return .custom("DM Mono", size: size)
+        }
+        return .system(size: size, weight: weight, design: .monospaced)
+    }
 }
 
 private struct AppCardModifier: ViewModifier {
@@ -34,16 +57,12 @@ private struct AppCardModifier: ViewModifier {
         content
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(AppTheme.cardMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(fill.opacity(0.2))
-                    )
+                    .fill(fill)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
                             .strokeBorder(AppTheme.border, lineWidth: 1)
                     )
-                    .shadow(color: AppTheme.shadow, radius: 8, x: 0, y: 4)
+                    .shadow(color: AppTheme.shadow, radius: 10, x: 0, y: 5)
             )
     }
 }
@@ -54,18 +73,14 @@ private struct StoreFieldModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .font(.system(size: 14, weight: .medium))
+            .font(AppTheme.body(size: 14, weight: .medium))
             .foregroundStyle(AppTheme.primaryText)
             .tint(AppTheme.primaryText)
             .padding(.horizontal, 12)
             .frame(maxWidth: maxWidth, minHeight: minHeight, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(AppTheme.fieldMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(AppTheme.surface.opacity(0.28))
-                    )
+                    .fill(AppTheme.surfaceMuted)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
@@ -88,11 +103,7 @@ private struct StorePickerModifier: ViewModifier {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(AppTheme.fieldMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(AppTheme.surface.opacity(0.28))
-                    )
+                    .fill(AppTheme.surfaceMuted)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
@@ -114,6 +125,53 @@ struct StoreGroupBoxStyle: GroupBoxStyle {
     }
 }
 
+struct BrandMarkView: View {
+    var size: CGFloat = 22
+
+    private var barHeights: [CGFloat] {
+        [0.30, 0.55, 0.86, 0.62, 0.38]
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: max(1, size * 0.08)) {
+            ForEach(Array(barHeights.enumerated()), id: \.offset) { _, height in
+                RoundedRectangle(cornerRadius: max(1, size * 0.05))
+                    .fill(
+                        LinearGradient(
+                            colors: [AppTheme.accent, AppTheme.accentStrong],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(
+                        width: max(1.8, size * 0.12),
+                        height: max(3, size * height)
+                    )
+            }
+        }
+        .frame(width: size, height: size, alignment: .bottom)
+        .accessibilityHidden(true)
+    }
+}
+
+struct BrandWordmarkView: View {
+    var size: CGFloat = 28
+
+    private var wordmark: AttributedString {
+        var value = AttributedString("BlueSpeak")
+        value.foregroundColor = AppTheme.primaryText
+        if let range = value.range(of: "Speak") {
+            value[range].foregroundColor = AppTheme.accent
+        }
+        return value
+    }
+
+    var body: some View {
+        Text(wordmark)
+            .font(AppTheme.heading(size: size, weight: .regular))
+    }
+}
+
 extension View {
     func appCard(fill: Color = AppTheme.surface) -> some View {
         modifier(AppCardModifier(fill: fill))
@@ -125,5 +183,29 @@ extension View {
 
     func storePicker(maxWidth: CGFloat = .infinity) -> some View {
         modifier(StorePickerModifier(maxWidth: maxWidth))
+    }
+}
+
+private extension NSColor {
+    static func bs(_ hex: UInt32, alpha: CGFloat = 1.0) -> NSColor {
+        let red = CGFloat((hex >> 16) & 0xFF) / 255.0
+        let green = CGFloat((hex >> 8) & 0xFF) / 255.0
+        let blue = CGFloat(hex & 0xFF) / 255.0
+        return NSColor(calibratedRed: red, green: green, blue: blue, alpha: alpha)
+    }
+
+    static func bsDynamic(
+        light: UInt32,
+        dark: UInt32,
+        alphaLight: CGFloat = 1.0,
+        alphaDark: CGFloat = 1.0
+    ) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let match = appearance.bestMatch(from: [.darkAqua, .aqua])
+            if match == .darkAqua {
+                return .bs(dark, alpha: alphaDark)
+            }
+            return .bs(light, alpha: alphaLight)
+        }
     }
 }

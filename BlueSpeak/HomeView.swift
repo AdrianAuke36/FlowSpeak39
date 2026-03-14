@@ -4,6 +4,7 @@ import AVFoundation
 import Combine
 import Speech
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct HomeView: View {
     @ObservedObject private var settings = AppSettings.shared
@@ -18,6 +19,7 @@ struct HomeView: View {
     enum Page: CaseIterable, Identifiable {
         case home
         case history
+        case bugReport
         case settings
 
         var id: Self { self }
@@ -28,6 +30,8 @@ struct HomeView: View {
                 return AppSettings.shared.ui("Hjem", "Home")
             case .history:
                 return AppSettings.shared.ui("Historikk", "History")
+            case .bugReport:
+                return AppSettings.shared.ui("Rapporter feil", "Report bug")
             case .settings:
                 return AppSettings.shared.ui("Innstillinger", "Settings")
             }
@@ -37,6 +41,7 @@ struct HomeView: View {
             switch self {
             case .home: return "house.fill"
             case .history: return "clock.arrow.circlepath"
+            case .bugReport: return "ladybug.fill"
             case .settings: return "gearshape.fill"
             }
         }
@@ -185,6 +190,8 @@ struct HomeView: View {
             MainPage()
         case .history:
             HistoryPage()
+        case .bugReport:
+            BugReportPage()
         case .settings:
             SettingsView(initialSection: settingsInitialSection)
                 .id(settingsViewIdentity)
@@ -337,7 +344,7 @@ private struct UpgradePlansModal: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .center, spacing: 12) {
                     Text(ui("Planer og betaling", "Plans and Billing"))
-                        .font(.system(size: 44, weight: .bold, design: .serif))
+                        .font(AppTheme.heading(size: 44, weight: .bold))
                         .foregroundStyle(AppTheme.primaryText)
 
                     Spacer()
@@ -509,7 +516,7 @@ private struct UpgradePlansModal: View {
 
                 HStack(spacing: 8) {
                     Text(title)
-                        .font(.system(size: 38, weight: .bold, design: .serif))
+                        .font(AppTheme.heading(size: 38, weight: .bold))
                         .foregroundStyle(AppTheme.primaryText)
 
                     if let badge {
@@ -658,22 +665,12 @@ struct AuthGateView: View {
             HStack(spacing: 32) {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(spacing: 10) {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(AppTheme.accent)
-                            .frame(width: 54, height: 54)
-                            .overlay(
-                                Image(systemName: "waveform.circle.fill")
-                                    .font(.system(size: 24, weight: .semibold))
-                                    .foregroundStyle(AppTheme.accentText)
-                            )
-
-                        Text("BlueSpeak")
-                            .font(.system(size: 18, weight: .bold, design: .serif))
-                            .foregroundStyle(AppTheme.primaryText)
+                        BrandMarkView(size: 22)
+                        BrandWordmarkView(size: 40)
                     }
 
                     Text(ui("Stemme-først skriving i alle apper", "Voice-first writing for every app"))
-                        .font(.system(size: 42, weight: .bold, design: .serif))
+                        .font(AppTheme.heading(size: 42, weight: .bold))
                         .foregroundStyle(AppTheme.primaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -709,7 +706,7 @@ struct AuthGateView: View {
 
                 VStack(alignment: .leading, spacing: 16) {
                     Text(mode.title)
-                        .font(.system(size: 30, weight: .bold, design: .serif))
+                        .font(AppTheme.heading(size: 30, weight: .bold))
                         .foregroundStyle(AppTheme.primaryText)
 
                     Text(mode.subtitle)
@@ -1052,18 +1049,8 @@ struct SetupOnboardingView: View {
             HStack(spacing: 56) {
                 VStack(alignment: .leading, spacing: 24) {
                     HStack(spacing: 10) {
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(AppTheme.surfaceMuted)
-                            .frame(width: 54, height: 54)
-                            .overlay(
-                                Image(systemName: "waveform.circle")
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundStyle(AppTheme.primaryText)
-                            )
-
-                        Text("BlueSpeak")
-                            .font(.system(size: 24, weight: .bold, design: .serif))
-                            .foregroundStyle(AppTheme.primaryText)
+                        BrandMarkView(size: 24)
+                        BrandWordmarkView(size: 48)
                     }
 
                     if step != .accessibility {
@@ -1079,7 +1066,7 @@ struct SetupOnboardingView: View {
                     }
 
                     Text(stepTitle)
-                        .font(.system(size: 44, weight: .bold, design: .serif))
+                        .font(AppTheme.heading(size: 44, weight: .bold))
                         .foregroundStyle(AppTheme.primaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -1847,17 +1834,14 @@ struct Sidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                // Removed RoundedRectangle with waveform.path per instructions
-
-                Text("BlueSpeak")
-                    .font(.system(size: 22, weight: .bold, design: .serif))
-                    .foregroundStyle(AppTheme.primaryText)
+                BrandMarkView(size: 18)
+                BrandWordmarkView(size: 34)
                     .lineLimit(1)
                     .minimumScaleFactor(0.84)
                     .layoutPriority(1)
 
                 Text(planBadgeLabel)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(AppTheme.mono(size: 11, weight: .regular))
                     .foregroundStyle(planBadgeTextColor)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -2187,7 +2171,7 @@ struct MainPage: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(welcomeTitle)
-                        .font(.system(size: 40, weight: .bold, design: .serif))
+                        .font(AppTheme.heading(size: 40, weight: .bold))
                         .foregroundStyle(AppTheme.primaryText)
 
                     HStack(spacing: 8) {
@@ -2196,7 +2180,7 @@ struct MainPage: View {
                             .foregroundStyle(AppTheme.secondaryText)
 
                         Text(settings.shortcutTriggerKey.compactLabel)
-                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .font(AppTheme.mono(size: 14, weight: .bold))
                             .foregroundStyle(AppTheme.primaryText)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -2218,7 +2202,7 @@ struct MainPage: View {
                 HStack(spacing: 12) {
                     SimpleStatCard(title: ui("Dagsstreak", "Day streak"), value: streakLabel)
                     SimpleStatCard(title: ui("Nivå", "Level"), value: "Lv \(currentLevel)")
-                    SimpleStatCard(title: ui("Tid spart i dag", "Time saved today"), value: TimeSaved.formatted(for: wordsToday))
+                    SimpleStatCard(title: ui("Totalt tid spart", "Total time saved"), value: TimeSaved.formatted(for: wordsTotal))
                 }
 
                 if let missions = gamification.snapshot?.missions {
@@ -2227,7 +2211,7 @@ struct MainPage: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text(ui("Nylige transkripsjoner", "Recent transcriptions"))
-                        .font(.system(size: 30, weight: .bold, design: .serif))
+                        .font(AppTheme.heading(size: 30, weight: .bold))
                         .foregroundStyle(AppTheme.primaryText)
 
                     if recentEntries.isEmpty {
@@ -2275,6 +2259,10 @@ struct MainPage: View {
         return max(remote, history.todayWordCount)
     }
 
+    private var wordsTotal: Int {
+        max(0, history.wordCount)
+    }
+
     private var recentEntries: [DictationEntry] {
         Array(history.entries.prefix(5))
     }
@@ -2300,7 +2288,7 @@ struct HistoryPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text(ui("Historikk", "History"))
-                    .font(.system(size: 34, weight: .bold, design: .serif))
+                    .font(AppTheme.heading(size: 34, weight: .bold))
                     .foregroundStyle(AppTheme.primaryText)
 
                 if history.entries.isEmpty {
@@ -2319,6 +2307,279 @@ struct HistoryPage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(AppTheme.canvas)
     }
+}
+
+struct BugReportPage: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var appLog = AppLogStore.shared
+
+    @State private var summary: String = ""
+    @State private var whereSeen: String = ""
+    @State private var stepsToReproduce: String = ""
+    @State private var expectedResult: String = ""
+    @State private var actualResult: String = ""
+    @State private var includeDebugLog: Bool = true
+    @State private var includeEnvironment: Bool = true
+    @State private var statusMessage: String = ""
+    @State private var statusIsError: Bool = false
+
+    private func ui(_ norwegian: String, _ english: String) -> String {
+        settings.ui(norwegian, english)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(ui("Rapporter feil", "Report a bug"))
+                    .font(AppTheme.heading(size: 34, weight: .bold))
+                    .foregroundStyle(AppTheme.primaryText)
+
+                Text(ui(
+                    "Beskriv feilen så konkret som mulig. Kopier eller lagre rapporten og send den til support.",
+                    "Describe the issue as clearly as possible. Copy or save the report, then send it to support."
+                ))
+                .font(.system(size: 14))
+                .foregroundStyle(AppTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        bugField(title: ui("Kort oppsummering", "Short summary"), text: $summary, placeholder: ui("Hva er feilen?", "What is the bug?"))
+                        bugField(title: ui("Hvor skjedde det?", "Where did it happen?"), text: $whereSeen, placeholder: ui("f.eks. Gmail i Chrome, Notes, Word", "e.g. Gmail in Chrome, Notes, Word"))
+                        bugEditor(title: ui("Steg for å gjenskape", "Steps to reproduce"), text: $stepsToReproduce, placeholder: ui("1. ...  2. ...  3. ...", "1. ...  2. ...  3. ..."))
+                        bugEditor(title: ui("Forventet resultat", "Expected result"), text: $expectedResult, placeholder: ui("Hva skulle ha skjedd?", "What should have happened?"))
+                        bugEditor(title: ui("Faktisk resultat", "Actual result"), text: $actualResult, placeholder: ui("Hva skjedde i stedet?", "What happened instead?"))
+
+                        HStack(spacing: 14) {
+                            Toggle(ui("Ta med debug-logg", "Include debug log"), isOn: $includeDebugLog)
+                                .toggleStyle(.switch)
+                            Toggle(ui("Ta med miljødata", "Include environment"), isOn: $includeEnvironment)
+                                .toggleStyle(.switch)
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppTheme.secondaryText)
+                    }
+                } label: {
+                    Text(ui("Feildetaljer", "Bug details"))
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .groupBoxStyle(StoreGroupBoxStyle())
+
+                HStack(spacing: 8) {
+                    Button(ui("Kopier rapport", "Copy report")) {
+                        copyReportToClipboard()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppTheme.accent)
+
+                    Button(ui("Lagre rapport…", "Save report…")) {
+                        saveReportToFile()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button(ui("Tøm felter", "Clear fields")) {
+                        clearInputs()
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                if !statusMessage.isEmpty {
+                    Text(statusMessage)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(statusIsError ? AppTheme.destructive : AppTheme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(AppTheme.fieldMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .strokeBorder(statusIsError ? AppTheme.destructive.opacity(0.35) : AppTheme.fieldBorder, lineWidth: 1)
+                                )
+                        )
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 28)
+            .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(AppTheme.canvas)
+    }
+
+    @ViewBuilder
+    private func bugField(title: String, text: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AppTheme.primaryText)
+
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppTheme.primaryText)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(AppTheme.fieldMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(AppTheme.surface.opacity(0.28))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                        )
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func bugEditor(title: String, text: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AppTheme.primaryText)
+
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 90)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+
+                if text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 13))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(AppTheme.fieldMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(AppTheme.surface.opacity(0.28))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(AppTheme.fieldBorder, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    private var generatedReport: String {
+        var lines: [String] = []
+        lines.append("BlueSpeak Bug Report")
+        lines.append("Generated: \(Self.isoDateFormatter.string(from: Date()))")
+
+        if includeEnvironment {
+            lines.append("App Version: \(appVersionString)")
+            lines.append("macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)")
+            lines.append("UI Language: \(settings.interfaceLanguage.label)")
+            lines.append("Dictation Language: \(settings.appLanguage.menuLabel)")
+            lines.append("Translate Target: \(settings.translationTargetLanguage.menuLabel)")
+            lines.append("STT Provider: \(settings.sttProvider.label)")
+        }
+
+        lines.append("")
+        lines.append("Summary")
+        lines.append(normalize(summary))
+        lines.append("")
+        lines.append("Where")
+        lines.append(normalize(whereSeen))
+        lines.append("")
+        lines.append("Steps to Reproduce")
+        lines.append(normalize(stepsToReproduce))
+        lines.append("")
+        lines.append("Expected")
+        lines.append(normalize(expectedResult))
+        lines.append("")
+        lines.append("Actual")
+        lines.append(normalize(actualResult))
+
+        if includeDebugLog {
+            let log = trimmedDebugLog()
+            lines.append("")
+            lines.append("Debug Log")
+            lines.append(log.isEmpty ? "(empty)" : log)
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private var appVersionString: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "\(short) (\(build))"
+    }
+
+    private func trimmedDebugLog(limit: Int = 180) -> String {
+        let all = appLog.exportText()
+        guard !all.isEmpty else { return "" }
+        let rows = all.components(separatedBy: .newlines)
+        return rows.suffix(limit).joined(separator: "\n")
+    }
+
+    private func normalize(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "(not provided)" : trimmed
+    }
+
+    private func copyReportToClipboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(generatedReport, forType: .string)
+        statusIsError = false
+        statusMessage = ui("Rapport kopiert til utklippstavlen.", "Report copied to clipboard.")
+    }
+
+    private func saveReportToFile() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "BlueSpeak-bug-report-\(formatter.string(from: Date())).txt"
+        panel.allowedContentTypes = [.plainText]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try generatedReport.write(to: url, atomically: true, encoding: .utf8)
+            statusIsError = false
+            statusMessage = ui("Rapport lagret.", "Report saved.")
+        } catch {
+            statusIsError = true
+            statusMessage = ui(
+                "Kunne ikke lagre rapport. \(error.localizedDescription)",
+                "Could not save report. \(error.localizedDescription)"
+            )
+            AppLogStore.shared.record(.error, "Bug report save failed", metadata: ["error": error.localizedDescription])
+        }
+    }
+
+    private func clearInputs() {
+        summary = ""
+        whereSeen = ""
+        stepsToReproduce = ""
+        expectedResult = ""
+        actualResult = ""
+        statusMessage = ""
+        statusIsError = false
+    }
+
+    private static let isoDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss ZZZZ"
+        return formatter
+    }()
 }
 
 struct SimpleStatCard: View {
@@ -2365,7 +2626,7 @@ struct DailyMissionsCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text(ui("Dagens mål", "Daily missions"))
-                    .font(.system(size: 22, weight: .bold, design: .serif))
+                    .font(AppTheme.heading(size: 22, weight: .bold))
                     .foregroundStyle(AppTheme.primaryText)
 
                 Spacer()
@@ -2450,7 +2711,7 @@ struct HistoryRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             Text(Self.timeFormatter.string(from: entry.date))
-                .font(.system(size: 11, design: .monospaced))
+                .font(AppTheme.mono(size: 11))
                 .foregroundColor(AppTheme.secondaryText)
                 .padding(.top, 2)
                 .frame(width: 36)
