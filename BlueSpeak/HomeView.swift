@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 
 struct HomeView: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var activePage: Page = .home
+    @State private var activePage: Page = .dashboard
     @State private var permissionRefreshNonce: Int = 0
     @State private var showSignedOutPopup: Bool = false
     @State private var showUpgradePlansModal: Bool = false
@@ -17,6 +17,7 @@ struct HomeView: View {
     @State private var settingsViewIdentity: UUID = UUID()
 
     enum Page: CaseIterable, Identifiable {
+        case dashboard
         case home
         case history
         case bugReport
@@ -26,6 +27,8 @@ struct HomeView: View {
 
         var title: String {
             switch self {
+            case .dashboard:
+                return AppSettings.shared.ui("Dashboard", "Dashboard")
             case .home:
                 return AppSettings.shared.ui("Hjem", "Home")
             case .history:
@@ -39,6 +42,7 @@ struct HomeView: View {
 
         var iconName: String {
             switch self {
+            case .dashboard: return "rectangle.3.group.fill"
             case .home: return "house.fill"
             case .history: return "clock.arrow.circlepath"
             case .bugReport: return "ladybug.fill"
@@ -186,6 +190,8 @@ struct HomeView: View {
     @ViewBuilder
     private var pageContent: some View {
         switch activePage {
+        case .dashboard:
+            DashboardView()
         case .home:
             MainPage()
         case .history:
@@ -1824,8 +1830,12 @@ struct Sidebar: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var history = DictationHistory.shared
     @StateObject private var gamification = GamificationStore.shared
+    @State private var isExpanded: Bool = false
     @Binding var activePage: HomeView.Page
     let onUpgradeTap: () -> Void
+
+    private let expandedWidth: CGFloat = 300
+    private let collapsedWidth: CGFloat = 64
 
     private func ui(_ norwegian: String, _ english: String) -> String {
         settings.ui(norwegian, english)
@@ -1835,28 +1845,30 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 BrandMarkView(size: 18)
-                BrandWordmarkView(size: 34)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.84)
-                    .layoutPriority(1)
+                if isExpanded {
+                    BrandWordmarkView(size: 34)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.84)
+                        .layoutPriority(1)
 
-                Text(planBadgeLabel)
-                    .font(AppTheme.mono(size: 11, weight: .regular))
-                    .foregroundStyle(planBadgeTextColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(AppTheme.fieldMaterial)
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(planBadgeBorderColor, lineWidth: 1)
-                            )
-                    )
+                    Text(planBadgeLabel)
+                        .font(AppTheme.mono(size: 11, weight: .regular))
+                        .foregroundStyle(planBadgeTextColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(AppTheme.fieldMaterial)
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(planBadgeBorderColor, lineWidth: 1)
+                                )
+                        )
+                }
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, isExpanded ? 16 : 10)
             .padding(.vertical, 18)
 
             Divider()
@@ -1866,7 +1878,8 @@ struct Sidebar: View {
                 SidebarItem(
                     icon: page.iconName,
                     label: page.title,
-                    active: activePage == page
+                    active: activePage == page,
+                    showLabel: isExpanded
                 ) {
                     activePage = page
                 }
@@ -1874,7 +1887,7 @@ struct Sidebar: View {
 
             Spacer()
 
-            if subscriptionPlan == .free {
+            if subscriptionPlan == .free && isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(ui("Gratisplan", "Free plan"))
@@ -1928,55 +1941,58 @@ struct Sidebar: View {
                 .padding(.bottom, 10)
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text(ui("Tips", "Tips"))
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AppTheme.primaryText)
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(ui("Tips", "Tips"))
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(AppTheme.primaryText)
 
-                tipRow(icon: "mic.fill", text: ui(
-                    "Hold \(settings.shortcutTriggerKey.compactLabel) for å diktere",
-                    "Hold \(settings.shortcutTriggerKey.compactLabel) to dictate"
-                ))
-                tipRow(icon: "globe", text: ui(
-                    "\(settings.shortcutTriggerKey.compactLabel) + Shift for å oversette",
-                    "\(settings.shortcutTriggerKey.compactLabel) + Shift to translate"
-                ))
-                tipRow(icon: "wand.and.stars", text: ui(
-                    "\(settings.shortcutTriggerKey.compactLabel) + Ctrl for rewrite",
-                    "\(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite"
-                ))
-                tipRow(icon: "square.and.arrow.down.on.square", text: ui(
-                    "\(settings.shortcutTriggerKey.compactLabel) + K for å lagre kontekst",
-                    "\(settings.shortcutTriggerKey.compactLabel) + K to save context"
-                ))
+                    tipRow(icon: "mic.fill", text: ui(
+                        "Hold \(settings.shortcutTriggerKey.compactLabel) for å diktere",
+                        "Hold \(settings.shortcutTriggerKey.compactLabel) to dictate"
+                    ))
+                    tipRow(icon: "globe", text: ui(
+                        "\(settings.shortcutTriggerKey.compactLabel) + Shift for å oversette",
+                        "\(settings.shortcutTriggerKey.compactLabel) + Shift to translate"
+                    ))
+                    tipRow(icon: "wand.and.stars", text: ui(
+                        "\(settings.shortcutTriggerKey.compactLabel) + Ctrl for rewrite",
+                        "\(settings.shortcutTriggerKey.compactLabel) + Ctrl to rewrite"
+                    ))
+                    tipRow(icon: "square.and.arrow.down.on.square", text: ui(
+                        "\(settings.shortcutTriggerKey.compactLabel) + K for å lagre kontekst",
+                        "\(settings.shortcutTriggerKey.compactLabel) + K to save context"
+                    ))
+                }
+                .padding(.all, 12)
+                .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(AppTheme.fieldMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(AppTheme.surfaceMuted.opacity(0.28))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(AppTheme.border, lineWidth: 1)
+                        )
+                )
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
             }
-            .padding(.all, 12)
-            .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(AppTheme.fieldMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(AppTheme.surfaceMuted.opacity(0.28))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(AppTheme.border, lineWidth: 1)
-                    )
-            )
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
 
             SidebarItem(
                 icon: HomeView.Page.settings.iconName,
                 label: HomeView.Page.settings.title,
-                active: activePage == .settings
+                active: activePage == .settings,
+                showLabel: isExpanded
             ) {
                 activePage = .settings
             }
             .padding(.bottom, 12)
         }
-        .frame(width: 220)
+        .frame(width: isExpanded ? expandedWidth : collapsedWidth)
         .background(
             Rectangle()
                 .fill(AppTheme.sidebarMaterial)
@@ -1985,6 +2001,12 @@ struct Sidebar: View {
                         .fill(AppTheme.sidebar.opacity(0.5))
                 )
         )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isExpanded = hovering
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
         .onAppear {
             Task { await gamification.refresh(force: true) }
         }
@@ -2129,19 +2151,23 @@ struct SidebarItem: View {
     let icon: String
     let label: String
     let active: Bool
+    let showLabel: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: showLabel ? 12 : 0) {
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .semibold))
                     .frame(width: 18)
-                Text(label)
-                    .font(.system(size: 16, weight: active ? .semibold : .medium))
-                Spacer()
+                if showLabel {
+                    Text(label)
+                        .font(.system(size: 16, weight: active ? .semibold : .medium))
+                    Spacer()
+                }
             }
-            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, alignment: showLabel ? .leading : .center)
+            .padding(.horizontal, showLabel ? 14 : 0)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 10)
@@ -2152,6 +2178,7 @@ struct SidebarItem: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 10)
         .foregroundColor(active ? AppTheme.accent : AppTheme.secondaryText)
+        .help(label)
     }
 }
 
