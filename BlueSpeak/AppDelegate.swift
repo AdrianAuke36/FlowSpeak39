@@ -152,6 +152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         configureHomeWindowBehavior()
         ensureKeyboardMonitors()
+        dictation.prewarmLocalCapturePipeline()
+        Task { await AIClient.shared.prewarmDraftPipelineIfNeeded() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -641,6 +643,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func scheduleFnStartIfNeeded() {
+        // Warm local STT pipeline right before hold-to-dictate starts.
+        dictation.prewarmLocalCapturePipeline()
         cancelPendingFnStart()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }

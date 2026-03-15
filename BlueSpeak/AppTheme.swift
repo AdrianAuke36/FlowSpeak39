@@ -2,24 +2,24 @@ import AppKit
 import SwiftUI
 
 enum AppTheme {
-    // BlueSpeak brand palette (Brand Guidelines v1.0)
-    static let canvas = Color(nsColor: .bsDynamic(light: 0xF0F4F7, dark: 0x0B0F14))
-    static let sidebar = Color(nsColor: .bsDynamic(light: 0xF4F7FA, dark: 0x161E27))
-    static let surface = Color(nsColor: .bsDynamic(light: 0xF4F7FA, dark: 0x161E27))
-    static let surfaceMuted = Color(nsColor: .bsDynamic(light: 0xF0F4F7, dark: 0x0B0F14))
-    static let border = Color(nsColor: .bsDynamic(light: 0x1A3D5C, dark: 0x1A3D5C, alphaLight: 0.16, alphaDark: 0.42))
-    static let fieldBorder = Color(nsColor: .bsDynamic(light: 0x1A3D5C, dark: 0x3D9BE9, alphaLight: 0.22, alphaDark: 0.36))
-    static let primaryText = Color(nsColor: .bsDynamic(light: 0x0B0F14, dark: 0xF0F4F7))
-    static let secondaryText = Color(nsColor: .bsDynamic(light: 0x1A3D5C, dark: 0xF0F4F7, alphaLight: 0.72, alphaDark: 0.72))
-    static let tertiaryText = Color(nsColor: .bsDynamic(light: 0x1A3D5C, dark: 0xF0F4F7, alphaLight: 0.52, alphaDark: 0.52))
-    static let accent = Color(nsColor: .bs(0x3D9BE9))
-    static let accentStrong = Color(nsColor: .bs(0x2280C8))
-    static let accentSoft = Color(nsColor: .bsDynamic(light: 0x5BB8FF, dark: 0x5BB8FF, alphaLight: 0.18, alphaDark: 0.18))
-    static let accentText = Color(nsColor: .bsDynamic(light: 0xF0F4F7, dark: 0xF0F4F7))
-    static let success = accent
-    static let warning = Color(nsColor: .bs(0x5BB8FF))
+    // Monokrom blå palett (støvet bakgrunn + hvite kort + klar blå aksent)
+    static let canvas = Color(nsColor: .bsDynamic(light: 0xEEF2F8, dark: 0xEEF2F8))
+    static let sidebar = Color(nsColor: .bsDynamic(light: 0xFFFFFF, dark: 0xFFFFFF))
+    static let surface = Color(nsColor: .bsDynamic(light: 0xFFFFFF, dark: 0xFFFFFF))
+    static let surfaceMuted = Color(nsColor: .bsDynamic(light: 0xF8FAFC, dark: 0xF8FAFC))
+    static let border = Color(nsColor: .bsDynamic(light: 0x0F172A, dark: 0x0F172A, alphaLight: 0.08, alphaDark: 0.08))
+    static let fieldBorder = Color(nsColor: .bsDynamic(light: 0x0F172A, dark: 0x0F172A, alphaLight: 0.12, alphaDark: 0.12))
+    static let primaryText = Color(nsColor: .bsDynamic(light: 0x0F172A, dark: 0x0F172A))
+    static let secondaryText = Color(nsColor: .bsDynamic(light: 0x0F172A, dark: 0x0F172A, alphaLight: 0.45, alphaDark: 0.45))
+    static let tertiaryText = Color(nsColor: .bsDynamic(light: 0x0F172A, dark: 0x0F172A, alphaLight: 0.32, alphaDark: 0.32))
+    static let accent = Color(nsColor: .bs(0x2563EB))
+    static let accentStrong = Color(nsColor: .bs(0x1D4ED8))
+    static let accentSoft = Color(nsColor: .bsDynamic(light: 0x2563EB, dark: 0x2563EB, alphaLight: 0.12, alphaDark: 0.12))
+    static let accentText = Color(nsColor: .bsDynamic(light: 0xFFFFFF, dark: 0xFFFFFF))
+    static let success = accentStrong
+    static let warning = accent
     static let destructive = Color(nsColor: .systemRed)
-    static let shadow = Color.black.opacity(0.18)
+    static let shadow = Color.black.opacity(0.06)
 
     // Surfaces
     static let cardMaterial: Color = surface

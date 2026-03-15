@@ -69,6 +69,7 @@ final class DictationController: NSObject {
     private var groqRecorder: AVAudioRecorder?
     private var groqRecordingURL: URL?
     private let startSound = NSSound(named: "Pop")
+    private var isInputTapInstalled: Bool = false
 
     private(set) var isRecording: Bool = false
     private(set) var isStarting: Bool = false
@@ -152,6 +153,13 @@ final class DictationController: NSObject {
     }
 
     func start(mode: CaptureMode = .dictation) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.start(mode: mode)
+            }
+            return
+        }
+
         guard !isRecording, !isStarting else { return }
         captureMode = mode
         activeSTTProvider = selectedProvider(for: mode)
@@ -199,26 +207,51 @@ final class DictationController: NSObject {
     }
 
     private func startWithAppleSpeech(token: Int) {
-        SFSpeechRecognizer.requestAuthorization { [weak self] authStatus in
-            guard let self else { return }
-            DispatchQueue.main.async {
+        let speechStatus = SFSpeechRecognizer.authorizationStatus()
+        switch speechStatus {
+        case .authorized:
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
                 guard self.shouldProceedStart(token: token) else { return }
-                guard authStatus == .authorized else {
-                    self.cancelPendingStart()
-                    return
-                }
-
-                AVCaptureDevice.requestAccess(for: .audio) { granted in
-                    DispatchQueue.main.async {
-                        guard self.shouldProceedStart(token: token) else { return }
-                        guard granted else {
-                            self.cancelPendingStart()
-                            return
-                        }
-                        self.startInternal(startToken: token)
+                self.startAppleSpeechAfterPermissionChecks(token: token)
+            }
+        case .notDetermined:
+            SFSpeechRecognizer.requestAuthorization { [weak self] authStatus in
+                guard let self else { return }
+                DispatchQueue.main.async {
+                    guard self.shouldProceedStart(token: token) else { return }
+                    guard authStatus == .authorized else {
+                        self.cancelPendingStart()
+                        return
                     }
+                    self.startAppleSpeechAfterPermissionChecks(token: token)
                 }
             }
+        default:
+            cancelPendingStart()
+        }
+    }
+
+    private func startAppleSpeechAfterPermissionChecks(token: Int) {
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch micStatus {
+        case .authorized:
+            guard shouldProceedStart(token: token) else { return }
+            startInternal(startToken: token)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                guard let self else { return }
+                DispatchQueue.main.async {
+                    guard self.shouldProceedStart(token: token) else { return }
+                    guard granted else {
+                        self.cancelPendingStart()
+                        return
+                    }
+                    self.startInternal(startToken: token)
+                }
+            }
+        default:
+            cancelPendingStart()
         }
     }
 
@@ -230,19 +263,39 @@ final class DictationController: NSObject {
             return
         }
 
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
-            DispatchQueue.main.async {
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch micStatus {
+        case .authorized:
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
                 guard self.shouldProceedStart(token: token) else { return }
-                guard granted else {
-                    self.cancelPendingStart()
-                    return
-                }
                 self.startGroqInternal(startToken: token)
             }
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                guard let self else { return }
+                DispatchQueue.main.async {
+                    guard self.shouldProceedStart(token: token) else { return }
+                    guard granted else {
+                        self.cancelPendingStart()
+                        return
+                    }
+                    self.startGroqInternal(startToken: token)
+                }
+            }
+        default:
+            cancelPendingStart()
         }
     }
 
     func stopAndInsert() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.stopAndInsert()
+            }
+            return
+        }
+
         if isStarting && !isRecording {
             clearOneShotOutputLanguageOverride()
             cancelPendingStart()
@@ -448,6 +501,14 @@ final class DictationController: NSObject {
     }
 
     func stopAndCaptureInstruction() -> String {
+        if !Thread.isMainThread {
+            var result = ""
+            DispatchQueue.main.sync {
+                result = self.stopAndCaptureInstruction()
+            }
+            return result
+        }
+
         if isStarting && !isRecording {
             clearOneShotOutputLanguageOverride()
             cancelPendingStart()
@@ -468,6 +529,13 @@ final class DictationController: NSObject {
     }
 
     func cancelCapture() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.cancelCapture()
+            }
+            return
+        }
+
         guard isCaptureActive else { return }
         stopInternal()
         resetSpeculativeState(cancel: true)
@@ -1539,8 +1607,9 @@ final class DictationController: NSObject {
 
         if audioEngine.isRunning {
             audioEngine.stop()
-            audioEngine.inputNode.removeTap(onBus: 0)
         }
+        removeInputTapIfInstalled()
+        audioEngine.reset()
         task?.cancel()
         task = nil
         request = nil
@@ -1750,6 +1819,13 @@ final class DictationController: NSObject {
     private func startInternal(startToken: Int) {
         guard shouldProceedStart(token: startToken) else { return }
         guard !isRecording else { return }
+
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+        removeInputTapIfInstalled()
+        audioEngine.reset()
+
         let locale = Locale(identifier: speechLocaleIdentifier)
         let recognizer = SFSpeechRecognizer(locale: locale)
             ?? SFSpeechRecognizer(locale: Locale(identifier: SpeechConfig.fallbackLocale))
@@ -1775,11 +1851,16 @@ final class DictationController: NSObject {
 
         let inputNode = audioEngine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            reportCaptureInterruption("Microphone format is unavailable.")
+            cancelPendingStart()
+            return
+        }
 
-        inputNode.removeTap(onBus: 0)
         inputNode.installTap(onBus: 0, bufferSize: SpeechConfig.audioBufferSize, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
         }
+        isInputTapInstalled = true
 
         audioEngine.prepare()
         do {
@@ -1845,13 +1926,20 @@ final class DictationController: NSObject {
         }
 
         if audioEngine.isRunning { audioEngine.stop() }
-        audioEngine.inputNode.removeTap(onBus: 0)
+        removeInputTapIfInstalled()
+        audioEngine.reset()
 
         request?.endAudio()
 
         task?.cancel()
         task = nil
         request = nil
+    }
+
+    private func removeInputTapIfInstalled() {
+        guard isInputTapInstalled else { return }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        isInputTapInstalled = false
     }
 
     private func applyPreferredInputDeviceIfNeeded() -> String {

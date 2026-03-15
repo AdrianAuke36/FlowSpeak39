@@ -10,7 +10,7 @@ struct BlueSpeakApp: App {
             HomeView()
                 .environment(\.locale, Locale(identifier: settings.interfaceLanguage.localeIdentifier))
         }
-        .defaultSize(width: 1160, height: 760)
+        .defaultSize(width: 980, height: 640)
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
 
