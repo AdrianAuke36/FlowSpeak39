@@ -73,9 +73,10 @@ private struct StoreFieldModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .environment(\.colorScheme, .light)
             .font(AppTheme.body(size: 14, weight: .medium))
-            .foregroundStyle(AppTheme.primaryText)
-            .tint(AppTheme.primaryText)
+            .foregroundColor(.black)
+            .tint(.black)
             .padding(.horizontal, 12)
             .frame(maxWidth: maxWidth, minHeight: minHeight, alignment: .leading)
             .background(
@@ -94,10 +95,11 @@ private struct StorePickerModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .environment(\.colorScheme, .light)
             .pickerStyle(.menu)
             .labelsHidden()
-            .foregroundStyle(AppTheme.primaryText)
-            .tint(AppTheme.primaryText)
+            .foregroundColor(.black)
+            .tint(.black)
             .frame(maxWidth: maxWidth, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

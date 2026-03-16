@@ -377,7 +377,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupQuickReplyShortcutSuppressionTap() {
         guard quickReplyKeyEventTap == nil else { return }
 
-        let eventMask = (1 << CGEventType.keyDown.rawValue)
+        let eventMask =
+            (1 << CGEventType.keyDown.rawValue) |
+            (1 << CGEventType.leftMouseDown.rawValue) |
+            (1 << CGEventType.leftMouseUp.rawValue) |
+            (1 << CGEventType.rightMouseDown.rawValue) |
+            (1 << CGEventType.rightMouseUp.rawValue) |
+            (1 << CGEventType.otherMouseDown.rawValue) |
+            (1 << CGEventType.otherMouseUp.rawValue) |
+            (1 << CGEventType.leftMouseDragged.rawValue) |
+            (1 << CGEventType.rightMouseDragged.rawValue) |
+            (1 << CGEventType.otherMouseDragged.rawValue)
         let callback: CGEventTapCallBack = { proxy, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             let context = Unmanaged<QuickReplyEventTapContext>.fromOpaque(refcon).takeUnretainedValue()
@@ -445,7 +455,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return Unmanaged.passUnretained(event)
         }
 
-        guard type == .keyDown else {
+        switch type {
+        case .keyDown:
+            break
+        case .leftMouseDown,
+             .leftMouseUp,
+             .rightMouseDown,
+             .rightMouseUp,
+             .otherMouseDown,
+             .otherMouseUp,
+             .leftMouseDragged,
+             .rightMouseDragged,
+             .otherMouseDragged:
+            if shouldSuppressTriggerShortcutsDuringCapture(event: event, flags: event.flags) {
+                suppressTriggerModifiersIfNeeded(for: event)
+            }
+            return Unmanaged.passUnretained(event)
+        default:
             return Unmanaged.passUnretained(event)
         }
         if settings.isShortcutCaptureActive {
@@ -476,6 +502,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.triggerQuickReplyContextCapture()
         }
         return nil
+    }
+
+    private func suppressTriggerModifiersIfNeeded(for event: CGEvent) {
+        var flags = event.flags
+        switch settings.shortcutTriggerKey {
+        case .leftOption, .rightOption:
+            flags.remove(.maskAlternate)
+        case .leftCommand, .rightCommand:
+            flags.remove(.maskCommand)
+        case .function:
+            break
+        }
+        event.flags = flags
     }
 
     private func shouldSuppressTriggerShortcutsDuringCapture(event: CGEvent, flags _: CGEventFlags) -> Bool {
